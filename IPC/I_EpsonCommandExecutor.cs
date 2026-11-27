@@ -37,6 +37,9 @@ namespace EpsonRobot.Service.Ads
         /// <summary>Cyclic execution step. Null while running, terminal result when finished.</summary>
         EpsonExecutionResult? Execute(in ST_EpsonCmd cmd, in ST_PlcToEpsonIpc plc);
 
+        /// <summary>Stop the active execution (reconnect, withdrawn command, failure). Must be idempotent.</summary>
+        void Abort(string reason);
+
         /// <summary>Current progress, wafer flags and requested lock releases.</summary>
         EpsonExecutionStatus Status { get; }
 

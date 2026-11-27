@@ -1,7 +1,8 @@
 # Betrieb und Test: ADS-Schnittstelle SPS ↔ Epson-IPC
 
 Stand: Vertrag v2 (`EpsonAdsContract.InterfaceVersion = 2`), Phase 3 + Hotfix
-ResetError-Deadlock, Testbench mit IPC-Simulator.
+ResetError-Deadlock, Testbench mit IPC-Simulator, Review-Umsetzung
+(Sequenz-Resync, Executor-Abort, Lock-Fixes, Thread-Modell).
 
 ## 1. Beteiligte Komponenten
 
@@ -35,7 +36,8 @@ ResetError-Deadlock, Testbench mit IPC-Simulator.
    `EpsonAdsService` als Hosted Service registrieren,
    `IEpsonCommandExecutor`-Implementierung einbinden (Test: `EpsonDummyCommandExecutor`).
 2. Standard-Ziel: lokale SPS `AmsNetId.Local`, **AmsPort 851**. Für eine
-   entfernte SPS `_plcAddress` anpassen.
+   entfernte SPS den Konstruktorparameter `plcNetId` (und ggf. `plcPort`)
+   setzen — die Adresse ist nicht mehr fest verdrahtet.
 3. Der Service schreibt `stIpcToPlc` und liest `stPlcToIpc` zyklisch
    (CycleTimeMs = 100, Änderungs-Notifications mit 10 ms).
 
@@ -52,6 +54,9 @@ aus und muss zyklisch gerufen werden.
 ### 3.2 `Command(...) : BOOL` — Auftrag erteilen
 Nur im State IDLE und bei lebendem IPC-Link möglich; bei gelatchtem
 IPC-Fehler (`stIpcToPlc.Error.Active`) wird nur `ResetError` angenommen.
+Zusätzlich abgewiesen werden `None`/`UserReaction` (keine Postfach-Aufträge,
+D5) und ein zweiter `Command()`-Aufruf im selben Zyklus (es gibt nur einen
+Request-Slot; der zweite Aufruf liefert FALSE statt den ersten zu überschreiben).
 Rückgabe FALSE = Ablehnung (Meldung im Eventlogger), TRUE = Auftrag im Postfach.
 
 Parameter je Auftragsart:
@@ -125,7 +130,7 @@ Jede Anfrage wird genau einmal quittiert (`nLastRecipeAckSequence`).
 |---|---|
 | `eState` | Postfach-State: IDLE / SEND_COMMAND / WAIT_ACCEPT / WAIT_COMPLETION / ERROR |
 | `bBusy`, `bDone` | Auftrag läuft / 1-Zyklus-Puls „erfolgreich beendet" |
-| `bAlarmCommandError` | TRUE im State ERROR (Fehler-Bit für Aufrufer/HMI) |
+| `bAlarmCommandError` | TRUE im State ERROR **oder** bei gelatchtem IPC-Fehler — bleibt so auch im IDLE sichtbar (z. B. nach einem Reject beim IPC-Start) |
 | `nErrorCode`, `sErrorText` | gelatchter PLC-Fehler (8001 Ack-Timeout, 8002 Cmd-Timeout, 8003 Heartbeat, 8004 ADS, 9001 Version, sonst IPC-Code) |
 | `nActiveSequence` / `nDoneSequence` / `nErrorSequence` | Sequenzbuchhaltung |
 | `dwRequestMask` / `dwGrantedMask` / `dwHeldMask` / `dwReleaseMask` | Lock-Bitmap |
@@ -134,7 +139,7 @@ Jede Anfrage wird genau einmal quittiert (`nLastRecipeAckSequence`).
 | `eRobotState`, `nCurrentToolType` | abgeleiteter Roboterstatus / aktuelles Werkzeug |
 | `stUserPrompt` | aktiver Prompt (MessageId, OptionsMask, Text) |
 | `bHeartbeatOk`, `bAdsConnected`, `bStationChannelConnected`, `bRemoteControlConnected` | Link-Zustand |
-| Alarm-Properties (`bAlarmTimeoutAck`, `bAlarmTimeoutCmd`, `bAlarmHeartbeatLost`, `bAlarmVersionMismatch`) | Eventlogger-Kopplung |
+| Alarm-Properties (`bAlarmTimeoutAck`, `bAlarmTimeoutCmd`, `bAlarmHeartbeatLost`, `bAlarmVersionMismatch`) | Eventlogger-Kopplung; `bAlarmTimeoutAck/Cmd` werden beim Rückkehr in IDLE (nach Reset oder erfolgreichem Abschluss) zurückgesetzt |
 
 ### 3.9 HMI-Schnittstelle (`stHmi`)
 Mirror aller Properties plus Bedienelemente:
@@ -157,9 +162,20 @@ IDLE ──(RequestCommand)──► SEND_COMMAND ──► WAIT_ACCEPT ──�
 ```
 
 - Sequenzen sind eindeutig (0 ist ungültig); Dedup im IDLE über
-  `stProperties.stLastCmd`.
+  `stProperties.stLastCmd`, IPC-seitig über die zuletzt gesehene Sequence.
+- **Sequenz-Resync**: Nach dem SPS-Start (einmalig, erster gültiger Heartbeat
+  im IDLE) übernimmt der FB `nLastSequence := MAX(Accepted, Done, Error)` der
+  IPC. Ein nach einem SPS-Reboot neuer Auftrag kann dadurch nicht mehr mit
+  alten IPC-Quittungen kollidieren (kein Phantom-„Done“).
 - Timeouts: Ack (`nTimeoutAckMs`, Fehler 8001) und Auftrag (`nTimeoutCmdMs`,
-  8002). Heartbeat ≥ 1000 ms (8003), ADS-Verlust während Auftrags (8004).
+  8002). Der Auftrags-Timeout **pausiert**, während die IPC auf eine externe
+  Entscheidung wartet (`WaitingForPressRecipe`, `WaitingForResources`,
+  `UserPrompt.Active`) — diese Warten sind bewusst unbegrenzt. Heartbeat ≥
+  1000 ms (8003), ADS-Verlust während Auftrags (8004).
+- Setzt die SPS den Auftrag ab (Timeout, ERROR) gilt `Cmd.Valid := FALSE`; die
+  IPC erkennt den Entzug und bricht die Ausführung ab (`Abort` im Executor).
+- Einen Auftrag während eines noch laufenden Auftrags lehnt die IPC mit
+  `ErrorSequence` + 2003 („IPC busy“) ab.
 - Im ERROR bleibt der Baustein latched; einziges Entrinnen ist
   `ResetError()` → Auftrag 110. Eine echte Vertragsabweichung (Version)
   wird vom IPC erneut abgelehnt (1005) und bleibt somit bestehen.
@@ -228,13 +244,16 @@ Legende: Umgebung A = Testbench-Simulator, B = End-to-End mit C#-Dummy.
 | 9 | A+B | Ack-Timeout | Auftrag starten und Simulator Accept verweigern (B: Service anhalten) | nach `nTimeoutAckMs` Fehler 8001, Alarm `bAlarmTimeoutAck` |
 | 10 | B | Versions-Freeze | Service mit `InterfaceVersion = 1` kompilieren | 9001 auf SPS, 1005 am IPC, keine Ausführung; Mismatch nicht weg-resetbar |
 | 11 | A+B | ThinPlate-Mismatch | `stPress.ThinPlate` am External ändern, ohne `bThinPlate` anzupassen (B), bzw. MoveWafer mit abweichendem Bit (A: via `bSimIpcReject` nicht abgedeckt — in B testen) | Ablehnung 1002 |
-| 12 | A+B | Pressrezept-Handshake | MoveWafer; in A erhebt der Simulator die Anforderung selbst (300 ms nach Accept), in B der Service — Antwort je über `fbEpsonADS.AnswerRecipeStart(eResult := Started)` (fließt nach `stPlcToIpc.External.Press.RecipeStartAckSequence/Result`) | `AnswerRecipeStart` wird aufgerufen (Rückgabe TRUE), Progress WaitingForPressRecipe → Started → Done; Release von WaferPress/WaferTransfer; ohne Antwort → Ack-Timeout 8002 |
+| 12 | A+B | Pressrezept-Handshake | MoveWafer; in A erhebt der Simulator die Anforderung selbst (300 ms nach Accept), in B der Service — Antwort je über `fbEpsonADS.AnswerRecipeStart(eResult := Started)` (fließt nach `stPlcToIpc.External.Press.RecipeStartAckSequence/Result`) | `AnswerRecipeStart` wird aufgerufen (Rückgabe TRUE), Progress WaitingForPressRecipe → Started → Done; Release von WaferPress/WaferTransfer; ohne Antwort wartet der Auftrag unbegrenzt (Auftrags-Timeout pausiert in `WaitingForPressRecipe`) |
 | 13 | B | Prompt-Ablehnung | MoveWafer/ChangeTool, wenn `UserPrompt.Active`: `fbEpsonADS.AnswerUserPrompt(eReaction := E_EpsonUserReaction.No)` (fließt nach `Cmd.UserReaction*`) | Fehler 2003, ERROR latched, Locks bleiben bis Reset gehalten |
 | 14 | B | Lock-Lebenszyklus | MoveWafer beobachten | RequestMask = Transfer+Press; nach WaferOnRobot Release WaferTransfer (Grant verschwindet trotz laufendem Auftrag); nach Done Release Rest |
 | 15 | B | ForceRelease | nach #13 Reset verweigern (IPC offline), Service-Fehler erzeugen, `ForceReleaseRequest` setzen, `ManageLocks(bForceReleaseAllowed := TRUE)` | alle Grants 0; mit FALSE keine Änderung |
 | 16 | B | Snapshot-Stale | External-Updates stoppen (`UpdateExternalState` nicht mehr rufen, `External.Valid` FALSE) | laufender Auftrag bricht mit 1003 ab |
 | 17 | A+B | Doppelbefehl/Dedup | denselben `Command`-Aufruf zweimal hintereinander | nur ein Auftrag mit neuer Sequence |
 | 18 | A+B | SetOutput-Reserve | `eOutputIndex := E_EpsonOutput.Reserve0` | Ablehnung 1002 |
+| 19 | B | SPS-Reboot-Resync | Auftrag fahren, IPC laufen lassen, SPS neu starten, sofort neuen Auftrag senden | erster Auftrag erhält Sequence > IPC-Historie; kein sofortiger Done-Puls ohne echte Ausführung (Resync auf `MAX(Accepted, Done, Error)` nach erstem Heartbeat) |
+| 20 | B | IPC busy | Auftrag fahren und nach SPS-Timeout (8002) sofort neuen Auftrag senden | neuer Auftrag wird mit `ErrorSequence` + 2003 („IPC busy“) abgelehnt; Fehlerlatch verlangt ResetError |
+| 21 | B | Auftrag entziehen | Auftrag fahren, SPS-seitig `Cmd.Valid := FALSE` setzen (nach PLC-Timeout geschieht das automatisch) | IPC bricht die Ausführung ab (`Executor.Abort`), `ErrorSequence` für die Sequenz; es kommt kein späteres Done für denselben Auftrag |
 
 ## 8. Beobachtungsmittel
 
@@ -253,9 +272,26 @@ Legende: Umgebung A = Testbench-Simulator, B = End-to-End mit C#-Dummy.
 
 - `TO_DWORD(eReaction)` in `AnswerUserPrompt` im XAE verifizieren (ggf.
   Bitvergleich per CASE).
+- **Rejected vs. Fault (P11)**: Aktuell latchet jede IPC-Ablehnung (auch eine
+  bloße Vorbedingungsverletzung wie `Transfer.Ready = FALSE`) einen Fehler und
+  verlangt `ResetError`. Eine Unterscheidung „Rejected“ (nur `ErrorSequence`,
+  nicht gelatcht) vs. „Fault“ (gelatcht) ist eine Vertragsentscheidung
+  (neuer Felder) und steht offen.
+- **`E_EpsonTool`-Mapping**: Das Alt-Programm (`HandelStatusBits`) mappt die
+  Werkzeuge 5 und 8 auf `SingleSide`; das Enum kennt sie als `DoubleSide`.
+  Namen/Mapping sind mit dem Altprogramm abzustimmen.
+- **Echter Executor (Phase 4)**: `Execute()` muss nicht-blockierend bleiben;
+  `CPMOVE` validiert heute über `TargetSlot`/`Source` statt
+  `Protocol.Position/Ext`, `TOOL`-Durchmesser, `POS` und `CNT` sind nicht
+  geprüft; `GrantSequence` wird IPC-seitig noch nicht ausgewertet;
+  `Robot.*`-Felder (z. B. `CurrentToolType`) sind Platzhalter.
+- Nach IPC-Reconnect mit hängendem Prompt: eine Bedienerreaktion mit alter
+  Sequenz wird abgewiesen (Warnung, keine Bestätigung). Der Auftrag ist zu
+  diesem Zeitpunkt ohnehin abgebrochen.
 - `E_EpsonAdsControlState`, `E_ControlSource`, `ST_EpsonAdsControlAlarms`,
   `ST_EpsonAdsControlConfig`, `FB_Base` sind Framework-Typen des Projekts und
   hier nicht enthalten.
 - ST- und C#-Code wurden statisch geprüft (XML-Wellformedness, Feld-/Enum-
-  Konsistenz, Layout-Selbsttest Phase 1), aber nicht kompiliert — erster
-  Übersetzungs-/Testlauf im Projektumfeld erforderlich.
+  Konsistenz, Layout-Selbsttest Phase 1, zyklengenaues Simulationsmodell),
+  aber nicht kompiliert — erster Übersetzungs-/Testlauf im Projektumfeld
+  erforderlich.

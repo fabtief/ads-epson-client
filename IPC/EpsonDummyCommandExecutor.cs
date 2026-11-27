@@ -140,6 +140,21 @@ namespace EpsonRobot.Service.Ads
             }
         }
 
+        public void Abort(string reason)
+        {
+            if (_steps.Count == 0 && !_hasCurrentStep && !_waitRecipe && !_waitPrompt
+                && _status.Progress == E_EpsonProgress.Idle)
+                return;
+
+            _steps.Clear();
+            _hasCurrentStep = false;
+            _waitRecipe = false;
+            _waitPrompt = false;
+            _pendingFailure = null;
+            _status = new EpsonExecutionStatus { Progress = E_EpsonProgress.Idle };
+            _logger.LogWarning("Dummy aborted: {Reason}.", reason);
+        }
+
         public void AnswerUserPrompt(uint messageId, E_EpsonUserReaction reaction)
         {
             if (!_waitPrompt || messageId != _activePromptId)

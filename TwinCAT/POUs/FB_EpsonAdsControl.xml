@@ -27,6 +27,10 @@ VAR
     // one-shot command request, set by RequestCommand() / ResetError()
     bReqCommand             : BOOL;
     stReqCmd                : ST_EpsonCmd;
+    stZeroCmd               : ST_EpsonCmd;      // zero template to flush request parameters
+
+    // one-shot sequence resync after PLC start (first valid heartbeat)
+    bSeqSynced              : BOOL := FALSE;
 
     // CONFIG structure
     {attribute 'TcPersistent'}
@@ -438,6 +442,11 @@ CASE stProperties.eState OF
         fbAckTimer(IN := FALSE);
         fbCmdTimer(IN := FALSE);
 
+        // timeout alarms are one-shot latches: cleared once the block is
+        // back in IDLE (after reset or successful completion)
+        bAlarmTimeoutAck := FALSE;
+        bAlarmTimeoutCmd := FALSE;
+
         // resolve latched request
         IF bReqCommand THEN
             bReqCommand := FALSE;
@@ -536,7 +545,13 @@ CASE stProperties.eState OF
 
         // check 3: command timeout
         ELSE
-            fbCmdTimer(IN := TRUE, PT := UDINT_TO_TIME(stConfig.nTimeoutCmdMs));
+            // the command timeout does not run while the IPC waits for an
+            // external decision (press recipe handshake, resources, operator
+            // prompt); those waits are unbounded by design
+            fbCmdTimer(IN := GVL_EpsonADS.stIpcToPlc.Cmd.Progress <> E_EpsonProgress.WaitingForPressRecipe
+                           AND GVL_EpsonADS.stIpcToPlc.Cmd.Progress <> E_EpsonProgress.WaitingForResources
+                           AND NOT GVL_EpsonADS.stIpcToPlc.UserPrompt.Active,
+                       PT := UDINT_TO_TIME(stConfig.nTimeoutCmdMs));
             IF fbCmdTimer.Q THEN
                 bAlarmTimeoutCmd := TRUE;
                 SetError(nErrorCode := 8002, sErrorText := 'Timeout: command execution on IPC exceeded');
@@ -591,6 +606,17 @@ END_IF
 
 bAlarmHeartbeatLost := NOT stProperties.bHeartbeatOk;
 
+// sequence resync after a PLC restart (one-shot): adopt the highest sequence
+// the IPC has already seen, so stale IPC acks cannot complete a new command
+IF stProperties.bHeartbeatOk AND NOT bSeqSynced
+   AND stProperties.eState = E_EpsonAdsControlState.IDLE THEN
+    bSeqSynced := TRUE;
+    nLastSequence := MAX(MAX(GVL_EpsonADS.stIpcToPlc.Cmd.AcceptedSequence,
+                             GVL_EpsonADS.stIpcToPlc.Cmd.DoneSequence),
+                         GVL_EpsonADS.stIpcToPlc.Cmd.ErrorSequence);
+    nLastReactionSequence := GVL_EpsonADS.stIpcToPlc.UserPrompt.AcceptedReactionSequence;
+END_IF
+
 // IPC connection channels (Phase 3)
 stProperties.bAdsConnected             := GVL_EpsonADS.stIpcToPlc.AdsConnected;
 stProperties.bStationChannelConnected  := GVL_EpsonADS.stIpcToPlc.StationChannelConnected;
@@ -616,8 +642,10 @@ IF bAlarmVersionMismatch AND stProperties.eState <> E_EpsonAdsControlState.ERROR
     SetError(nErrorCode := 9001, sErrorText := 'Interface version mismatch between PLC and Epson IPC');
 END_IF
 
-// command error alarm follows the ERROR state, cleared via ResetError() command
-bAlarmCommandError := (stProperties.eState = E_EpsonAdsControlState.ERROR);
+// command error alarm follows the ERROR state or a latched IPC error
+// (stays visible even while IDLE, e.g. after a rejected startup command)
+bAlarmCommandError := (stProperties.eState = E_EpsonAdsControlState.ERROR)
+    OR GVL_EpsonADS.stIpcToPlc.Error.Active;
 
 EvaluateLink := TRUE;
 ]]></ST>
@@ -637,6 +665,7 @@ stProperties.nErrorCode   := 0;
 stProperties.sErrorText   := '';
 
 bReqCommand := FALSE;
+bSeqSynced             := FALSE;
 nLastReactionSequence  := 0;
 nLastRecipeAckSequence := 0;
 nLastGrantedMask       := 0;
@@ -800,6 +829,22 @@ IF NOT bEnable THEN
     RETURN;
 END_IF
 
+// one request per cycle: a second Command() call would silently overwrite
+// the latched request of the first one
+IF bReqCommand THEN
+    F_SendMessage('Command not possible. Request already pending.', TcEventSeverity.Warning, THIS^.fbSourceInfo);
+    RequestCommand := FALSE;
+    RETURN;
+END_IF
+
+// None/UserReaction are no mailbox commands: UserReaction runs over the
+// Cmd.UserReaction* backchannel (AnswerUserPrompt)
+IF eCommand = E_EpsonCommand.None OR eCommand = E_EpsonCommand.UserReaction THEN
+    F_SendMessage('Command not possible. None/UserReaction is not a mailbox command.', TcEventSeverity.Warning, THIS^.fbSourceInfo);
+    RequestCommand := FALSE;
+    RETURN;
+END_IF
+
 // Check IPC link
 IF NOT stProperties.bHeartbeatOk THEN
     F_SendMessage('Command not possible. IPC link not alive.', TcEventSeverity.Warning, THIS^.fbSourceInfo);
@@ -872,8 +917,8 @@ IF bReqCommand THEN
     RETURN;
 END_IF
 
-stReqCmd.Code     := E_EpsonCommand.ResetError;
-stReqCmd.Sequence := 0; // assigned in EvaluateCommand()
+stReqCmd := stZeroCmd;  // flush stale parameters from a previous command
+stReqCmd.Code := E_EpsonCommand.ResetError;
 bReqCommand := TRUE;
 
 ResetError := TRUE;
@@ -992,7 +1037,8 @@ END_VAR]]></Declaration>
     // STATUS
         stHmi.sName             := stBaseProperties.sName;
         stHmi.bEnable           := bEnable;
-        stHmi.bError            := (stProperties.eState = E_EpsonAdsControlState.ERROR);
+        stHmi.bError            := (stProperties.eState = E_EpsonAdsControlState.ERROR)
+                                   OR GVL_EpsonADS.stIpcToPlc.Error.Active;
         stHmi.eControlSource    := eControlSource;
 
     // COMMAND
@@ -1068,6 +1114,14 @@ stProperties.nCurrentToolType := GVL_EpsonADS.stIpcToPlc.Robot.CurrentToolType;
 stProperties.stPrompt         := GVL_EpsonADS.stIpcToPlc.UserPrompt;
 stProperties.bWarning         := GVL_EpsonADS.stIpcToPlc.Warning.Active;
 stProperties.sWarningText     := GVL_EpsonADS.stIpcToPlc.Warning.Text;
+
+// mirror a latched IPC error while IDLE so HMI/alarms show the IPC fault
+// (PLC-side faults are latched by SetError() with the ERROR state)
+IF stProperties.eState = E_EpsonAdsControlState.IDLE
+   AND GVL_EpsonADS.stIpcToPlc.Error.Active THEN
+    stProperties.nErrorCode := GVL_EpsonADS.stIpcToPlc.Error.Code;
+    stProperties.sErrorText := GVL_EpsonADS.stIpcToPlc.Error.Text;
+END_IF
 ]]></ST>
       </Implementation>
     </Method>

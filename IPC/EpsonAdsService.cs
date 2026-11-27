@@ -27,9 +27,6 @@ namespace EpsonRobot.Service.Ads
         private const string CommandValidPath = PlcToIpcPath + ".Cmd.Valid";
         private const ushort IpcInterfaceVersion = EpsonAdsContract.InterfaceVersion;
 
-        // Commands pending at connect time are not executed.
-        private const bool ExecutePendingCommandOnStart = false;
-
         // Max wait for the PLC to grant all requested lock bits.
         private const int GrantTimeoutMs = 15000;
 
@@ -44,8 +41,10 @@ namespace EpsonRobot.Service.Ads
 
         private readonly ILogger<EpsonAdsService> _logger;
         private readonly AdsClient _ads = new AdsClient();
-        private readonly AmsAddress _plcAddress = new AmsAddress(AmsNetId.Local, AmsPort);
+        private readonly AmsAddress _plcAddress;
         private readonly ConcurrentQueue<ST_EpsonCmd> _commands = new ConcurrentQueue<ST_EpsonCmd>();
+        private readonly ConcurrentQueue<EpsonUserPromptRequest> _pendingPrompts = new ConcurrentQueue<EpsonUserPromptRequest>();
+        private readonly ConcurrentQueue<byte> _pendingRecipeRequests = new ConcurrentQueue<byte>();
         private readonly IEpsonCommandExecutor _executor;
 
         private uint _hPlcToIpc;
@@ -57,7 +56,6 @@ namespace EpsonRobot.Service.Ads
 
         private bool _firstCycle;
         private bool? _interfaceCompatible;
-        private bool _sequenceKnown;
         private uint _lastSequence;
         private long _lastHeartbeatTick;
 
@@ -71,6 +69,7 @@ namespace EpsonRobot.Service.Ads
         private uint _heldMask;
         private uint _releaseMask;
         private bool _forceReleaseActive;
+        private volatile bool _forceReleaseRequested;
 
         private volatile object? _lastPlc;
         private volatile object? _lastIpc;
@@ -80,6 +79,9 @@ namespace EpsonRobot.Service.Ads
 
         /// <summary>Epson remote control channel state, published to the PLC.</summary>
         public bool RemoteControlConnected { get; set; }
+
+        /// <summary>Pending commands at connect time are rejected, not executed.</summary>
+        public bool ExecutePendingCommandOnStart { get; set; }
 
         // Command execution phases. Grant handling is ADS contract logic and
         // therefore kept in this service; the work itself is done by the executor.
@@ -93,9 +95,13 @@ namespace EpsonRobot.Service.Ads
         /// <summary>Raised when a new command is accepted from the PLC.</summary>
         public event EventHandler<ST_EpsonCmd>? CommandReceived;
 
-        public EpsonAdsService(ILogger<EpsonAdsService> logger, IEpsonCommandExecutor? executor = null)
+        public EpsonAdsService(ILogger<EpsonAdsService> logger, IEpsonCommandExecutor? executor = null,
+            string? plcNetId = null, int plcPort = AmsPort)
         {
             _logger = logger;
+            _plcAddress = string.IsNullOrWhiteSpace(plcNetId)
+                ? new AmsAddress(AmsNetId.Local, plcPort)
+                : new AmsAddress(new AmsNetId(plcNetId), plcPort);
             _executor = executor ?? new EpsonDummyCommandExecutor(logger);
             _executor.UserPromptRequested += OnUserPromptRequested;
             _executor.RecipeStartRequested += OnRecipeStartRequested;
@@ -120,9 +126,8 @@ namespace EpsonRobot.Service.Ads
             }
         }
 
-        public bool TryDequeueCommand(out ST_EpsonCmd command) => _commands.TryDequeue(out command);
-
-        /// <summary>Recovery request: asks the SPS to revoke all grants after a safe stop.</summary>
+        /// <summary>Recovery request: asks the SPS to revoke all grants after a safe stop.
+        /// Applied in the next service cycle (thread-safe via flag).</summary>
         public bool TryRequestForceRelease()
         {
             if (_execPhase != ExecPhase.Idle)
@@ -131,9 +136,7 @@ namespace EpsonRobot.Service.Ads
                 return false;
             }
 
-            _forceReleaseActive = true;
-            _ipcToPlc.Lock.ForceReleaseRequest = true;
-            _logger.LogWarning("Force release requested.");
+            _forceReleaseRequested = true;
             return true;
         }
 
@@ -213,6 +216,7 @@ namespace EpsonRobot.Service.Ads
                     null,
                     typeof(bool));
 
+                ResetExecutionState("ADS (re)connect.");
                 _ipcToPlc = new ST_EpsonIpcToPlc
                 {
                     InterfaceVersion = IpcInterfaceVersion,
@@ -221,13 +225,16 @@ namespace EpsonRobot.Service.Ads
                     UserPrompt = new ST_EpsonUserPrompt { Text = string.Empty }
                 };
                 _interfaceCompatible = null;
-                _sequenceKnown = false;
-                _heldMask = 0;
-                _releaseMask = 0;
-                _forceReleaseActive = false;
                 _lastSnapshotSequence = 0;
-                _lastReactionSequence = 0;
                 _lastRecipeAckSequence = 0;
+
+                // Seed the counters above the PLC start value (1) so stale PLC
+                // acks/answers from a previous run cannot match a new request.
+                unchecked
+                {
+                    _lastReactionSequence = (uint)Environment.TickCount;
+                    _recipeRequestSequence = (uint)Environment.TickCount;
+                }
                 _logger.LogInformation("ADS connected.");
             }
             catch
@@ -250,6 +257,7 @@ namespace EpsonRobot.Service.Ads
 
         private void Disconnect()
         {
+            ResetExecutionState("ADS disconnect.");
             _ads.AdsNotificationEx -= OnCmdNotificationReceived;
             if (_commandNotificationHandle != 0)
                 TryCleanup(() => _ads.DeleteDeviceNotification(_commandNotificationHandle));
@@ -286,6 +294,8 @@ namespace EpsonRobot.Service.Ads
 
             UpdateCompatibility(plc.InterfaceVersion);
 
+            ApplyExecutorEvents();
+
             if (_firstCycle && !ExecutePendingCommandOnStart && plc.Cmd.Valid)
                 DropPendingCommand(plc.Cmd);
             else if (_interfaceCompatible == true)
@@ -294,8 +304,8 @@ namespace EpsonRobot.Service.Ads
             HandleUserReaction(plc);
             HandleRecipeResponse(plc);
             UpdateLocks(plc);
-            RunExecution(plc);
             UpdateSnapshotWatchdog(plc);
+            RunExecution(plc);
             PublishStatus();
             UpdateConnectionFlags();
 
@@ -322,7 +332,6 @@ namespace EpsonRobot.Service.Ads
 
         private void DropPendingCommand(ST_EpsonCmd command)
         {
-            _sequenceKnown = true;
             _lastSequence = command.Sequence;
 
             // Explicit rejection prevents the PLC mailbox from remaining blocked forever.
@@ -338,19 +347,30 @@ namespace EpsonRobot.Service.Ads
         private void HandleCommand(ST_EpsonCmd command)
         {
             if (!command.Valid)
-            {
-                _sequenceKnown = false;
                 return; // Keep the last accepted sequence as acknowledgement history.
-            }
 
-            if (_sequenceKnown && command.Sequence == _lastSequence)
+            // Dedup on the last seen sequence only: _lastSequence survives a
+            // Valid=FALSE phase, so a repeated sequence is never run twice.
+            if (command.Sequence == _lastSequence)
                 return; // Already processed, stays acknowledged via AcceptedSequence.
 
-            _sequenceKnown = true;
             _lastSequence = command.Sequence;
 
+            // One-command model: no new order while one is active or queued.
+            if (_execPhase != ExecPhase.Idle || !_commands.IsEmpty)
+            {
+                _ipcToPlc.Cmd.ErrorSequence = command.Sequence;
+                _ipcToPlc.Error.Active = true;
+                _ipcToPlc.Error.Code = (ushort)E_EpsonErrorCode.EpsonCommandRejected;
+                _ipcToPlc.Error.Text = "Command rejected: IPC busy.";
+                _logger.LogWarning("Command rejected (busy): Seq={Sequence}, Code={Code}.",
+                    command.Sequence, command.Code);
+                return;
+            }
+
             // Error latch (D7): only ResetError may pass, everything else is
-            // rejected until the PLC performed the safe reset condition.
+            // rejected until the PLC performed the safe reset condition. The
+            // original error stays visible so the PLC mirrors the root cause.
             if (_ipcToPlc.Error.Active && command.Code != E_EpsonCommand.ResetError)
             {
                 _ipcToPlc.Cmd.ErrorSequence = command.Sequence;
@@ -393,7 +413,12 @@ namespace EpsonRobot.Service.Ads
 
             _ipcToPlc.UserPrompt.AcceptedReactionSequence = sequence;
             _ipcToPlc.UserPrompt.Active = false;
-            _executor.AnswerUserPrompt(plc.Cmd.UserMessageId, plc.Cmd.UserReaction);
+            try { _executor.AnswerUserPrompt(plc.Cmd.UserMessageId, plc.Cmd.UserReaction); }
+            catch (Exception ex)
+            {
+                FailExecution(E_EpsonErrorCode.EpsonProtocolError,
+                    $"Executor rejected the user prompt answer: {ex.Message}");
+            }
 
             _logger.LogInformation("User reaction forwarded: Seq={Sequence}, MsgId={MessageId}, Reaction={Reaction}.",
                 sequence, plc.Cmd.UserMessageId, plc.Cmd.UserReaction);
@@ -410,27 +435,65 @@ namespace EpsonRobot.Service.Ads
                 return; // Acknowledged without terminal result: keep waiting.
 
             _lastRecipeAckSequence = request;
-            _executor.AnswerRecipeStart(request, plc.External.Press.RecipeStartResult);
+            try { _executor.AnswerRecipeStart(request, plc.External.Press.RecipeStartResult); }
+            catch (Exception ex)
+            {
+                FailExecution(E_EpsonErrorCode.EpsonProtocolError,
+                    $"Executor rejected the recipe start answer: {ex.Message}");
+            }
         }
 
+        // Executor events may fire from foreign threads (real state machines).
+        // They are only enqueued here and applied in the cycle thread so all
+        // writes to the IPC snapshot stay single-threaded.
         private void OnUserPromptRequested(object? sender, EpsonUserPromptRequest request)
         {
-            _ipcToPlc.UserPrompt.Active = true;
-            _ipcToPlc.UserPrompt.MessageId = request.MessageId;
-            _ipcToPlc.UserPrompt.OptionsMask = request.OptionsMask;
-            _ipcToPlc.UserPrompt.Text = request.Text;
-            _ipcToPlc.Warning.Active = false;
-            _ipcToPlc.Warning.Text = string.Empty;
-            _logger.LogInformation("User prompt published: MsgId={MessageId}, Mask=0x{Mask:X}.",
-                request.MessageId, request.OptionsMask);
+            _pendingPrompts.Enqueue(request);
         }
 
         private void OnRecipeStartRequested(object? sender, EventArgs e)
         {
-            unchecked { _recipeRequestSequence++; }
-            _lastRecipeAckSequence = 0;
-            _ipcToPlc.Press.RecipeStartRequestSequence = _recipeRequestSequence;
-            _logger.LogInformation("Press recipe start requested: Seq={Sequence}.", _recipeRequestSequence);
+            _pendingRecipeRequests.Enqueue(0);
+        }
+
+        private void ApplyExecutorEvents()
+        {
+            while (_pendingPrompts.TryDequeue(out EpsonUserPromptRequest? request))
+            {
+                _ipcToPlc.UserPrompt.Active = true;
+                _ipcToPlc.UserPrompt.MessageId = request.MessageId;
+                _ipcToPlc.UserPrompt.OptionsMask = request.OptionsMask;
+                _ipcToPlc.UserPrompt.Text = request.Text;
+                _ipcToPlc.Warning.Active = false;
+                _ipcToPlc.Warning.Text = string.Empty;
+                _logger.LogInformation("User prompt published: MsgId={MessageId}, Mask=0x{Mask:X}.",
+                    request.MessageId, request.OptionsMask);
+            }
+
+            bool recipeRequested = false;
+            while (_pendingRecipeRequests.TryDequeue(out _))
+                recipeRequested = true;
+
+            if (recipeRequested)
+            {
+                unchecked { _recipeRequestSequence++; }
+                _lastRecipeAckSequence = 0;
+                _ipcToPlc.Press.RecipeStartRequestSequence = _recipeRequestSequence;
+                _logger.LogInformation("Press recipe start requested: Seq={Sequence}.", _recipeRequestSequence);
+            }
+
+            if (_forceReleaseRequested)
+            {
+                _forceReleaseRequested = false;
+                if (_execPhase != ExecPhase.Idle)
+                {
+                    _logger.LogWarning("Force release rejected: a command is active.");
+                    return;
+                }
+                _forceReleaseActive = true;
+                _ipcToPlc.Lock.ForceReleaseRequest = true;
+                _logger.LogWarning("Force release requested.");
+            }
         }
 
         // ------------------------------------------------------------------
@@ -450,12 +513,19 @@ namespace EpsonRobot.Service.Ads
                     FailExecution(E_EpsonErrorCode.MissingLockGrant, "Lock grant timeout.");
             }
 
-            // Release processing: a bit is done when the PLC revoked the grant.
-            uint revoked = _releaseMask & ~plc.Lock.GrantedMask & AllLockBits;
-            if (revoked != 0)
+            if (_execPhase == ExecPhase.Run)
             {
-                _heldMask &= ~revoked;
-                _releaseMask &= ~revoked;
+                // Grant loss during execution: the SPS withdrew a bit (no longer
+                // allowed) or confirmed an IPC release request. The bit leaves
+                // Held-, Release- and RequestMask so the arbiter stays consistent.
+                uint lost = _heldMask & ~plc.Lock.GrantedMask & AllLockBits;
+                if (lost != 0)
+                {
+                    _heldMask &= ~lost;
+                    _releaseMask &= ~lost;
+                    _requestMask &= ~lost;
+                    _logger.LogWarning("Lock grants lost during execution: Mask=0x{Mask:X}.", lost);
+                }
             }
 
             if (_forceReleaseActive && (plc.Lock.GrantedMask & AllLockBits) == 0)
@@ -464,6 +534,7 @@ namespace EpsonRobot.Service.Ads
                 _ipcToPlc.Lock.ForceReleaseRequest = false;
                 _heldMask = 0;
                 _releaseMask = 0;
+                _requestMask = 0;
                 _logger.LogInformation("Force release completed: all grants revoked.");
             }
 
@@ -483,6 +554,15 @@ namespace EpsonRobot.Service.Ads
                 return;
             }
 
+            // The PLC withdraws a command by resetting Valid (e.g. after a PLC
+            // timeout or a reset): stop the executor instead of running on.
+            if (_execPhase != ExecPhase.Idle && !plc.Cmd.Valid)
+            {
+                FailExecution(E_EpsonErrorCode.EpsonCommandRejected,
+                    "Command withdrawn by PLC (Valid reset). ");
+                return;
+            }
+
             switch (_execPhase)
             {
                 case ExecPhase.Idle:
@@ -494,7 +574,22 @@ namespace EpsonRobot.Service.Ads
                     return; // Grant handling is done in UpdateLocks.
 
                 case ExecPhase.Run:
-                    EpsonExecutionResult? result = _executor.Execute(_activeCmd, plc);
+                    if ((plc.Lock.GrantedMask & _requestMask) != _requestMask)
+                    {
+                        FailExecution(E_EpsonErrorCode.MissingLockGrant,
+                            "Lock grant revoked during execution.");
+                        return;
+                    }
+
+                    EpsonExecutionResult? result;
+                    try { result = _executor.Execute(_activeCmd, plc); }
+                    catch (Exception ex)
+                    {
+                        FailExecution(E_EpsonErrorCode.EpsonProtocolError,
+                            $"Executor failed: {ex.Message}");
+                        return;
+                    }
+
                     if (result.HasValue)
                     {
                         if (result.Value.Success)
@@ -510,7 +605,7 @@ namespace EpsonRobot.Service.Ads
         {
             _activeCmd = cmd;
             _grantStartTick = Environment.TickCount64;
-            _ipcToPlc.Cmd.Accepted = false;
+            _ipcToPlc.Cmd.Done = false;
             _ipcToPlc.Cmd.WaferPicked = false;
             _ipcToPlc.Cmd.WaferPlaced = false;
             _ipcToPlc.Cmd.Progress = E_EpsonProgress.Validating;
@@ -522,26 +617,38 @@ namespace EpsonRobot.Service.Ads
                 return;
             }
 
-            if (!_executor.TryStart(cmd, plc, out EpsonExecutionResult failure, out uint mask))
+            bool started;
+            try
             {
-                FailExecution(failure.ErrorCode, failure.ErrorText);
+                started = _executor.TryStart(cmd, plc, out EpsonExecutionResult failure, out uint mask);
+                if (!started)
+                {
+                    FailExecution(failure.ErrorCode, failure.ErrorText);
+                    return;
+                }
+                _requestMask = mask;
+            }
+            catch (Exception ex)
+            {
+                FailExecution(E_EpsonErrorCode.EpsonProtocolError, $"Executor failed: {ex.Message}");
                 return;
             }
 
-            _requestMask = mask;
             _ipcToPlc.Lock.OwnerSequence = cmd.Sequence;
-            _ipcToPlc.Lock.RequestMask = mask;
+            _ipcToPlc.Lock.RequestMask = _requestMask;
 
-            _execPhase = mask == 0 ? ExecPhase.Run : ExecPhase.WaitGrant;
+            _execPhase = _requestMask == 0 ? ExecPhase.Run : ExecPhase.WaitGrant;
             _logger.LogInformation("Command execution started: Seq={Sequence}, Code={Code}, RequestMask=0x{Mask:X}.",
-                cmd.Sequence, cmd.Code, mask);
+                cmd.Sequence, cmd.Code, _requestMask);
         }
 
         private void CompleteExecution()
         {
             // All resources are requested for release after the safely confirmed end.
             _releaseMask |= _heldMask;
+            _requestMask = 0;
             _ipcToPlc.Lock.RequestMask = 0;
+            _ipcToPlc.Cmd.Done = true;
             _ipcToPlc.Cmd.DoneSequence = _activeCmd.Sequence;
             _ipcToPlc.Cmd.Progress = E_EpsonProgress.Done;
 
@@ -555,14 +662,25 @@ namespace EpsonRobot.Service.Ads
 
         private void FailExecution(E_EpsonErrorCode code, string text)
         {
-            // Held locks stay held on failure: release happens only after the
-            // SPS safety check (ResetError flow / ForceReleaseRequest).
-            _ipcToPlc.Lock.RequestMask = 0;
+            // Stop the executor first: no state machine may run on after a failure.
+            if (_execPhase != ExecPhase.Idle)
+            {
+                try { _executor.Abort(text); }
+                catch (Exception ex) { _logger.LogDebug(ex, "Executor abort failed."); }
+            }
+
+            // Held locks stay held on failure: RequestMask keeps the requested
+            // bits so the SPS arbiter continues granting them until the SPS
+            // safety check (ResetError flow / ForceReleaseRequest) releases them.
+            _ipcToPlc.Lock.RequestMask = _requestMask;
+            _ipcToPlc.Cmd.Done = false;
             _ipcToPlc.Cmd.ErrorSequence = _activeCmd.Sequence;
             _ipcToPlc.Cmd.Progress = E_EpsonProgress.Error;
             _ipcToPlc.Error.Active = true;
             _ipcToPlc.Error.Code = (ushort)code;
             _ipcToPlc.Error.Text = text;
+            _ipcToPlc.UserPrompt.Active = false;
+            _ipcToPlc.Press.RecipeStartRequestSequence = 0;
             _logger.LogWarning("Command failed: Seq={Sequence}, Code={Code} ({Text}).",
                 _activeCmd.Sequence, code, text);
             ResetExecution();
@@ -572,6 +690,31 @@ namespace EpsonRobot.Service.Ads
         {
             _execPhase = ExecPhase.Idle;
             _requestMask = 0;
+        }
+
+        // Full reset on reconnect: abort the executor, drain the queue and clear
+        // every execution and backchannel trace in the IPC snapshot.
+        private void ResetExecutionState(string reason)
+        {
+            if (_execPhase != ExecPhase.Idle)
+            {
+                try { _executor.Abort(reason); }
+                catch (Exception ex) { _logger.LogDebug(ex, "Executor abort failed."); }
+            }
+
+            while (_commands.TryDequeue(out _)) { }
+            _execPhase = ExecPhase.Idle;
+            _requestMask = 0;
+            _heldMask = 0;
+            _releaseMask = 0;
+            _forceReleaseActive = false;
+            _forceReleaseRequested = false;
+            _ipcToPlc.Lock.RequestMask = 0;
+            _ipcToPlc.Lock.HeldMask = 0;
+            _ipcToPlc.Lock.ReleaseMask = 0;
+            _ipcToPlc.Lock.ForceReleaseRequest = false;
+            _ipcToPlc.UserPrompt.Active = false;
+            _ipcToPlc.Press.RecipeStartRequestSequence = 0;
         }
 
         private void UpdateSnapshotWatchdog(ST_PlcToEpsonIpc plc)
@@ -610,11 +753,23 @@ namespace EpsonRobot.Service.Ads
                 _ipcToPlc.Cmd.Progress = status.Progress == E_EpsonProgress.Idle
                     ? E_EpsonProgress.Validating
                     : status.Progress;
-                _releaseMask |= status.RequestedReleaseMask & _heldMask;
+
+                // Early release: the bit leaves RequestMask too, otherwise the
+                // SPS would immediately re-grant the revoked lock.
+                uint early = status.RequestedReleaseMask & _heldMask;
+                if (early != 0)
+                {
+                    _releaseMask |= early;
+                    _requestMask &= ~early;
+                }
             }
 
-            _ipcToPlc.Robot.State = _ipcToPlc.Error.Active
-                ? E_EpsonState.Error
+            // Keep the requested bits published every cycle: the SPS arbiter is
+            // level based and revokes grants whose RequestMask bit disappears.
+            _ipcToPlc.Lock.RequestMask = _requestMask;
+
+            _ipcToPlc.Robot.State = !_ads.IsConnected ? E_EpsonState.Offline
+                : _ipcToPlc.Error.Active ? E_EpsonState.Error
                 : busy ? E_EpsonState.Busy
                 : E_EpsonState.Ready;
         }
