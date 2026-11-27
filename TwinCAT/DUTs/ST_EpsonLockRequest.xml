@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4026.19">
+  <DUT Name="ST_EpsonLockRequest" Id="{65512961-7f79-47fa-8fe0-b26d338f9dd1}">
+    <Declaration><![CDATA[{attribute 'pack_mode' := '1'}
+TYPE ST_EpsonLockRequest :
+STRUCT
+    OwnerSequence         : UDINT;                // Auftragssequenz, zu der die Anforderungen gehören
+    RequestMask           : DWORD;                // Vom IPC angeforderte Ressourcen
+    HeldMask              : DWORD;                // Vom IPC verwendete, als gewährt bestätigte Ressourcen
+    ReleaseMask           : DWORD;                // Explizite Freigabe; SPS löscht Grant nach Verarbeitung
+    ForceReleaseRequest   : BOOL;                 // Recovery nur nach sicherem Stopp; SPS prüft und quittiert
+END_STRUCT
+END_TYPE]]></Declaration>
+  </DUT>
+</TcPlcObject>

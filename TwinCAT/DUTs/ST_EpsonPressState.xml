@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4026.19">
+  <DUT Name="ST_EpsonPressState" Id="{1327c22a-e4cc-4e9d-a9f1-7916aeb04c17}">
+    <Declaration><![CDATA[{attribute 'pack_mode' := '1'}
+TYPE ST_EpsonPressState :
+STRUCT
+    Ready                    : BOOL;             // Pressstation bereit für den angeforderten Schritt
+    PlatePresent             : BOOL;             // Pressplatte vorhanden
+    ThinPlate                : BOOL;             // Aktueller Plattentyp aus SPS-Prozessdaten
+    TargetSlotFree           : BOOL;             // Angeforderter Zielslot frei
+    RecipeStartAckSequence   : UDINT;            // Quittierte Sequenz der Pressrezept-Anforderung
+    RecipeStartResult        : E_EpsonPressResult; // Ergebnis für die quittierte Sequenz
+END_STRUCT
+END_TYPE]]></Declaration>
+  </DUT>
+</TcPlcObject>

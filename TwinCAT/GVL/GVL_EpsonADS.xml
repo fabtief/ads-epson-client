@@ -1,0 +1,10 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4026.19">
+  <GVL Name="GVL_EpsonADS" Id="{9e7a2831-ab3f-40a2-9d5f-05e90a27439b}">
+    <Declaration><![CDATA[{attribute 'qualified_only'}
+VAR_GLOBAL
+    stPlcToIpc          : ST_PlcToEpsonIpc;
+    stIpcToPlc          : ST_EpsonIpcToPlc;
+END_VAR]]></Declaration>
+  </GVL>
+</TcPlcObject>

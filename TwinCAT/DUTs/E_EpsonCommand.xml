@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4026.19">
+  <DUT Name="E_EpsonCommand" Id="{c9bbcbd3-4410-4e92-bfee-d4573266723e}">
+    <Declaration><![CDATA[{attribute 'qualified_only'}
+{attribute 'strict'}
+{attribute 'to_string'}
+TYPE E_EpsonCommand :
+(
+    None                     := 0,   // Kein Auftrag
+    Initialize               := 10,  // Initialisieren und Parken (CInitEpsonSM)
+    StartProgram             := 20,  // Controllerprogramm starten (StartEpsonProgSM)
+    ContinueProgram          := 21,  // Controllerprogramm fortsetzen
+    PauseProgram             := 22,  // Controllerprogramm pausieren
+    StopProgram              := 23,  // Controllerprogramm geordnet stoppen
+    MoveWafer                := 30,  // Wafertransport mit Werkzeugpruefung (CPutGetEpsonSM)
+    GetTool                  := 40,  // Werkzeug aus internem/externem Lager holen (CGetToolEpsonSM)
+    PutTool                  := 41,  // Aktuelles Werkzeug intern/extern ablegen (CPutToolEpsonSM)
+    ChangeTool               := 42,  // Vollstaendiger Werkzeugwechsel (CChangeToolEpsonSM)
+    Park                     := 50,  // Epson in bestätigte Parkposition fahren (CParkPositionEpsonSM)
+    SetServiceMode           := 60,  // Service-Modus setzen (CServEpsonSM)
+    CleanTool                := 70,  // Werkzeugreinigung (CCleanEpsonSM)
+    PressplateInit           := 80,  // Pressplatte initialisieren (CPPINIT)
+    PressplatePrepIn         := 81,  // Pressplatte für Waferempfang vorbereiten
+    PressplatePrepOut        := 82,  // Pressplatte für Waferabgabe vorbereiten
+    PressplateCloseIn        := 83,  // Pressplattenempfang abschliessen (ThinPlate beachten)
+    PressplateCloseOut       := 84,  // Pressplattenabgabe abschliessen
+    SetOutput                := 90,  // Einzelnen Epson-Ausgang im Servicebetrieb schalten (COUT)
+    UserReaction             := 100, // Reserviert: Antwort laeuft über Cmd.UserReaction*, nicht als Auftrag
+    ResetError               := 110, // Fehler nur nach lokaler Controller-/Safety-Pruefung zuruecksetzen
+    SendSingleProtocolCommand := 120 // Genau einen typisierten Stationsbefehl aus Cmd.Protocol senden
+);
+END_TYPE]]></Declaration>
+  </DUT>
+</TcPlcObject>

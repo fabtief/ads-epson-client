@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4026.19">
+  <DUT Name="ST_PlcToEpsonIpc" Id="{f1c4bb4b-d137-41dd-a624-eb4d0e061f20}">
+    <Declaration><![CDATA[// Gesamte Output-Struktur SPS -> IPC
+{attribute 'pack_mode' := '1'}
+TYPE ST_PlcToEpsonIpc :
+STRUCT
+    InterfaceVersion      : UINT := 2;            // Schnittstellenversion (2: Vertrag mit Backchannels)
+    Cmd                   : ST_EpsonCmd;          // Auftragsdaten + Bedienerreaktions-Backchannel
+    External              : ST_EpsonExternalState;// Prozess-Snapshot + Pressrezept-Antwort
+    Lock                  : ST_EpsonLockGrant;    // Ressourcenfreigaben
+END_STRUCT
+END_TYPE]]></Declaration>
+  </DUT>
+</TcPlcObject>

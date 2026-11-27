@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4026.19">
+  <DUT Name="E_EpsonUserReaction" Id="{ab992f2f-017d-44c7-b24b-d57fb0e13cce}">
+    <Declaration><![CDATA[{attribute 'qualified_only'}
+{attribute 'strict'}
+{attribute 'to_string'}
+// Zweierpotenzen: Werte sind direkt als Bits in UserPrompt.OptionsMask verwendbar
+TYPE E_EpsonUserReaction :
+(
+    None   := 0,
+    OK     := 1,
+    No     := 2,
+    Abort  := 4,
+    Ignore := 8,
+    Retry  := 16,
+    Yes    := 32
+);
+END_TYPE]]></Declaration>
+  </DUT>
+</TcPlcObject>

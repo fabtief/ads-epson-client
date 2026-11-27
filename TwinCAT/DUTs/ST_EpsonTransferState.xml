@@ -1,0 +1,13 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4026.19">
+  <DUT Name="ST_EpsonTransferState" Id="{5e131de0-994c-4bc4-a9ef-d623a1cf9e88}">
+    <Declaration><![CDATA[{attribute 'pack_mode' := '1'}
+TYPE ST_EpsonTransferState :
+STRUCT
+    Ready                 : BOOL;                 // Transferstation bereit
+    WaferExpected         : BOOL;                 // Wafer wird an Quelle erwartet
+END_STRUCT
+END_TYPE
+]]></Declaration>
+  </DUT>
+</TcPlcObject>

@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4026.19">
+  <DUT Name="ST_EpsonIpcToPlc" Id="{63b16d55-3982-4d95-9827-67c2c8fd67fe}">
+    <Declaration><![CDATA[// Gesamte Status-Struktur IPC -> SPS
+{attribute 'pack_mode' := '1'}
+TYPE ST_EpsonIpcToPlc :
+STRUCT
+    InterfaceVersion         : UINT;                 // Vom IPC implementierte Schnittstellenversion
+    Heartbeat                : UDINT;                // Zyklischer Watchdog-Zähler
+    AdsConnected             : BOOL;                 // ADS-Verbindung des IPC aktiv
+    StationChannelConnected  : BOOL;                 // Epson-Telegrammkanal verbunden
+    RemoteControlConnected   : BOOL;                 // Epson-Remote-Control-Kanal verbunden
+    Cmd                      : ST_EpsonCmdAck;       // Auftragsphasen/-ergebnis
+    Robot                    : ST_EpsonRobotStatus;  // Epson-eigener Status
+    Press                    : ST_EpsonPressStatus;  // Pressrezept-Anforderung
+    UserPrompt               : ST_EpsonUserPrompt;   // Bedienerprompt
+    Warning                  : ST_EpsonWarning;      // Warnung
+    Error                    : ST_EpsonError;        // Fehlerdiagnose
+    Lock                     : ST_EpsonLockRequest;  // Ressourcenanforderungen/-besitz
+END_STRUCT
+END_TYPE]]></Declaration>
+  </DUT>
+</TcPlcObject>

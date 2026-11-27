@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4026.19">
+  <DUT Name="ST_EpsonLockGrant" Id="{cca4c0b6-3688-4d87-bece-f5c35a6f9281}">
+    <Declaration><![CDATA[{attribute 'pack_mode' := '1'}
+TYPE ST_EpsonLockGrant :
+STRUCT
+    GrantedMask           : DWORD;                // Bitmaske erteilter Ressourcen (Bit 0..4)
+    GrantSequence         : UDINT;                // Bei jeder Änderung der Grants erhöhen
+END_STRUCT
+END_TYPE]]></Declaration>
+  </DUT>
+</TcPlcObject>

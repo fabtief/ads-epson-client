@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4026.19">
+  <DUT Name="E_EpsonState" Id="{fc745d78-86d6-48bf-98ae-2668d3d1448b}">
+    <Declaration><![CDATA[{attribute 'qualified_only'}
+{attribute 'strict'}
+{attribute 'to_string'}
+TYPE E_EpsonState :
+(
+    Offline      := 0, // Keine Verbindung zum Epson-Controller
+    Connecting   := 1, // Verbindungsaufbau läuft
+    Initializing := 2, // Initialisierung läuft
+    Ready        := 3, // Bereit für zulässige Auftraege
+    Busy         := 4, // Auftrag in Ausfuehrung
+    Paused       := 5, // Programm pausiert
+    Service      := 6, // Service-Modus aktiv
+    Error        := 7, // Fehlerzustand
+    Stopping     := 8  // Geordneter Stopp läuft
+);
+END_TYPE]]></Declaration>
+  </DUT>
+</TcPlcObject>

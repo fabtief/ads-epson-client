@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4026.19">
+  <DUT Name="E_EpsonTool" Id="{4f023658-badd-4dc2-9d84-d658da7bb5d3}">
+    <Declaration><![CDATA[{attribute 'qualified_only'}
+{attribute 'strict'}
+{attribute 'to_string'}
+// Legacy-Protokoll: Tool-ID 0 = kein Werkzeug montiert
+TYPE E_EpsonTool :
+(
+    Free              := 0,   // Kein Werkzeug montiert
+    Tool3SingleSide   := 3,
+    Tool4SingleSide   := 4,
+    Tool5DoubleSide   := 5,
+    Tool6SingleSide   := 6,
+    Tool8DoubleSide   := 8,
+    Unknown           := 255  // Werkzeug nicht erkannt/nicht auswertbar
+);
+END_TYPE]]></Declaration>
+  </DUT>
+</TcPlcObject>

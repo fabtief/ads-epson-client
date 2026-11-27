@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4026.19">
+  <DUT Name="ST_EpsonRobotState" Id="{072d8bbd-f853-49c6-a2b0-ad08d3eeea5d}">
+    <Declaration><![CDATA[{attribute 'pack_mode' := '1'}
+TYPE ST_EpsonRobotState :
+STRUCT
+    Ready                 : BOOL;                 // Roboter betriebsbereit
+    Idle                  : BOOL;                 // Keine laufende Bewegung
+    Parked                : BOOL;                 // Bestätigte Parkposition hergestellt (Genmark)
+END_STRUCT
+END_TYPE]]></Declaration>
+  </DUT>
+</TcPlcObject>
