@@ -510,6 +510,12 @@ CASE stProperties.eState OF
             GVL_EpsonADS.stPlcToIpc.Cmd.Valid := FALSE;
             stProperties.eState := E_EpsonAdsControlState.IDLE;
 
+            // a successfully executed ResetError clears the latched PLC-side error
+            IF stProperties.stLastCmd.Code = E_EpsonCommand.ResetError THEN
+                stProperties.nErrorCode := 0;
+                stProperties.sErrorText := '';
+            END_IF
+
         // check 2: completed with error?
         ELSIF GVL_EpsonADS.stIpcToPlc.Cmd.ErrorSequence = stProperties.nActiveSequence THEN
             stProperties.bBusy := FALSE;
@@ -534,7 +540,17 @@ CASE stProperties.eState OF
         GVL_EpsonADS.stPlcToIpc.Cmd.Valid := FALSE;
 
         // IPC keeps Error.Active latched (contract v2). Remains in error state
-        // until ResetError() issued the ResetError command (110).
+        // until ResetError() issued the ResetError command (110); that order is
+        // dispatched through the regular postbox by leaving ERROR for IDLE.
+        IF bReqCommand THEN
+            IF stReqCmd.Code = E_EpsonCommand.ResetError THEN
+                stProperties.eState := E_EpsonAdsControlState.IDLE;
+            ELSE
+                // stale non-reset request cannot run in ERROR; drop it so
+                // ResetError() is not blocked by a pending request
+                bReqCommand := FALSE;
+            END_IF
+        END_IF
 
 END_CASE
 
@@ -582,7 +598,10 @@ IF (NOT stProperties.bHeartbeatOk OR NOT stProperties.bAdsConnected)
 END_IF
 
 // interface version check (latched, blocks command handling)
-bAlarmVersionMismatch := GVL_EpsonADS.stIpcToPlc.InterfaceVersion <> nEPSON_INTERFACE_VERSION;
+// only evaluated while the IPC is actually present: at PLC start the IPC has not
+// published its snapshot yet (version field = 0) and must not latch an error
+bAlarmVersionMismatch := stProperties.bHeartbeatOk
+    AND GVL_EpsonADS.stIpcToPlc.InterfaceVersion <> nEPSON_INTERFACE_VERSION;
 IF bAlarmVersionMismatch AND stProperties.eState <> E_EpsonAdsControlState.ERROR THEN
     SetError(nErrorCode := 9001, sErrorText := 'Interface version mismatch between PLC and Epson IPC');
 END_IF

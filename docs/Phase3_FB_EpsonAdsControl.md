@@ -109,3 +109,24 @@ Empfohlene Werte in `stConfig`:
   geprüft wurden XML-Wellformedness, GUID-Eindeutigkeit (104 eindeutige GUIDs)
   und die Feldkonsistenz POU ↔ DUT (Properties: 27/27, HMI: 33/33 Felder
   abgedeckt).
+
+## Hotfix: Deadlock im ResetError-Ablauf
+
+Review-Befund: Beim PLC-Start latched sofort Fehler 9001 (Interface-Version),
+weil die Versionsprüfung bereits läuft, bevor der IPC seinen Snapshot
+veröffentlicht hat (`stIpcToPlc.InterfaceVersion = 0`). `ResetError()` kam
+nie durch: der State ERROR hat `bReqCommand` nie aufgelöst.
+
+Korrekturen in `EvaluateLink` / `EvaluateCommand`:
+1. **Versionsprüfung nur bei anwesendem IPC**: `bAlarmVersionMismatch` wird
+   nur ausgewertet, wenn `bHeartbeatOk` — vor der ersten IPC-Verbindung
+   (Version = 0) wird kein Fehler gelatcht, der Baustein bleibt offline im
+   IDLE statt im ERROR zu starten.
+2. **ERROR-Zustand ist verlassen**: Ein pending `ResetError`-Auftrag führt
+   ERROR → IDLE, der Auftrag läuft regulär durch das Postfach
+   (Accept → Done). Bei Erfolg werden `nErrorCode`/`sErrorText` gelatcht
+   zurückgesetzt (konsistent zum C# `ClearError()`).
+3. **Stale Requests werden verworfen**: Ein in ERROR kollidierendes
+   normales pending Kommando wird fallen gelassen, statt `bReqCommand`
+   dauerhaft zu blockieren (sonst verweigert `ResetError()` mit
+   „Command request pending").
