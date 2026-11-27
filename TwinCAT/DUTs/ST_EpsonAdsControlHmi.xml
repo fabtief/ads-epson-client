@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4026.19">
+  <DUT Name="ST_EpsonAdsControlHmi" Id="{267b9fe7-769c-4b7e-bd43-1a14bf58a902}">
+    <Declaration><![CDATA[TYPE ST_EpsonAdsControlHmi :
+STRUCT
+    sName                      : STRING(255);
+    bEnable                    : BOOL;
+    bError                     : BOOL;
+    eControlSource             : E_ControlSource;
+    bCmdReset                  : BOOL;
+    bCmdUserReaction           : BOOL;
+    eCmdUserReaction           : E_EpsonUserReaction;
+
+    eState                     : E_EpsonAdsControlState;
+    bBusy                      : BOOL;
+    bDone                      : BOOL;
+    bHeartbeatOk               : BOOL;
+    bWaferPicked               : BOOL;
+    bWaferPlaced               : BOOL;
+    bForceReleaseRequest       : BOOL;
+    bAdsConnected              : BOOL;
+    bStationChannelConnected   : BOOL;
+    bRemoteControlConnected    : BOOL;
+    bWarning                   : BOOL;
+    nErrorCode                 : UINT;
+    sErrorText                 : STRING(255);
+    sWarningText               : STRING(255);
+    nActiveSequence            : UDINT;
+    nDoneSequence              : UDINT;
+    nErrorSequence             : UDINT;
+    nGrantSequence             : UDINT;
+    dwRequestMask              : DWORD;
+    dwGrantedMask              : DWORD;
+    dwHeldMask                 : DWORD;
+    dwReleaseMask              : DWORD;
+    eProgress                  : E_EpsonProgress;
+    eRobotState                : E_EpsonState;
+    nCurrentToolType           : E_EpsonTool;
+    stPrompt                   : ST_EpsonUserPrompt;
+END_STRUCT
+END_TYPE]]></Declaration>
+  </DUT>
+</TcPlcObject>

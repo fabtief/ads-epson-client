@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4026.19">
+  <DUT Name="ST_EpsonAdsControlProperties" Id="{26f0feff-f7e9-4bff-8245-8066d450ebff}">
+    <Declaration><![CDATA[TYPE ST_EpsonAdsControlProperties :
+STRUCT
+    eState                     : E_EpsonAdsControlState;
+    bBusy                      : BOOL;
+    bDone                      : BOOL;
+    bHeartbeatOk               : BOOL;
+    bWaferPicked               : BOOL;
+    bWaferPlaced               : BOOL;
+    bForceReleaseRequest       : BOOL;
+    bAdsConnected              : BOOL;
+    bStationChannelConnected   : BOOL;
+    bRemoteControlConnected    : BOOL;
+    bWarning                   : BOOL;
+    nErrorCode                 : UINT;
+    sErrorText                 : STRING(255);
+    sWarningText               : STRING(255);
+    nActiveSequence            : UDINT;
+    nDoneSequence              : UDINT;
+    nErrorSequence             : UDINT;
+    nGrantSequence             : UDINT;
+    dwRequestMask              : DWORD;
+    dwGrantedMask              : DWORD;
+    dwHeldMask                 : DWORD;
+    dwReleaseMask              : DWORD;
+    eProgress                  : E_EpsonProgress;
+    eRobotState                : E_EpsonState;
+    nCurrentToolType           : E_EpsonTool;
+    stPrompt                   : ST_EpsonUserPrompt;
+    stLastCmd                  : ST_EpsonCmd;
+END_STRUCT
+END_TYPE]]></Declaration>
+  </DUT>
+</TcPlcObject>
