@@ -70,11 +70,17 @@ Parameter je Auftragsart:
 | `ResetError` | — | nur über `ResetError()`, nicht über `Command()` |
 
 ### 3.3 `ResetError() : BOOL` — Fehler quittieren
-Nur im State ERROR, bei `bEnable`, lebendem IPC-Link und ohne hängende
-Anforderung. Erzeugt den Auftrag `E_EpsonCommand.ResetError` (110), der
-regulär durch Accept→Done läuft. Nach erfolgreichem Abschluss werden
+Zulässig, wenn der FB im State ERROR ist **oder** ein IPC-Fehler gelatcht ist
+(`stIpcToPlc.Error.Active`), bei `bEnable`, lebendem IPC-Link und ohne
+hängende Anforderung. Erzeugt den Auftrag `E_EpsonCommand.ResetError` (110),
+der regulär durch Accept→Done läuft. Nach erfolgreichem Abschluss werden
 `nErrorCode`/`sErrorText` zurückgesetzt; der IPC löscht `Error.Active`
 (seine Fehler) selbst bei Done des Auftrags 110.
+
+Ein Reset-Auftrag, der ansteht während die Postbox in WAIT_ACCEPT/WAIT_COMPLETION
+festhängt (IPC-Fehler gelatcht), verwirft den sitzengebliebenen Auftrag und wird
+stattdessen regulär versendet — die Postbox kann so nicht mehr im
+WAIT-\_-State verhungern.
 
 ### 3.4 `UpdateExternalState(...)` — Prozessdaten liefern
 Zyklisch vor/nach `Run()` rufen. Überträgt `bAutoMode`, `bSafetyPermissive`
@@ -133,7 +139,9 @@ Jede Anfrage wird genau einmal quittiert (`nLastRecipeAckSequence`).
 ### 3.9 HMI-Schnittstelle (`stHmi`)
 Mirror aller Properties plus Bedienelemente:
 - `bCmdReset` (Flanke) → `ResetError()` — nur bei `eControlSource = HMI`.
-- `bCmdUserReaction` (Flanke) + `eCmdUserReaction` → `AnswerUserPrompt()`.
+- `bCmdUserReaction` (Flanke) + `eCmdUserReaction` → `AnswerUserPrompt()` —
+  **unabhängig von `eControlSource`** (Backchannel-Daten, keine Steuerung);
+  nur `bCmdReset` bleibt an `eControlSource = HMI` gebunden.
 
 ## 4. Ablaufmodell eines Auftrags
 
@@ -169,7 +177,8 @@ Bedienelemente:
 | `bAutoSequence` | Auto-Ablauf Init → StartProgram → MoveWafer → ChangeTool |
 | `bSimIpcOnline := FALSE` | Verbindungstrennung: Heartbeat stoppt, `AdsConnected` FALSE |
 | `bSimIpcReject` | Einmalig: nächster Auftrag wird vom „IPC" abgelehnt (1001 + `ErrorSequence`) |
-| `bAutoAnswerPrompts` | Prompt → `AnswerUserPrompt(OK)`, Pressrezept → `AnswerRecipeStart(Started)` |
+| `bAutoAnswerPrompts` | Prompt → `AnswerUserPrompt(OK)`, Pressrezept-Anforderung → `AnswerRecipeStart(Started)` |
+| — (immer aktiv) | Der Simulator erhebt bei laufendem MoveWafer nach 300 ms selbst die Pressrezept-Anforderung (`Press.RecipeStartRequestSequence`), wie es der echte Service tut |
 | `tSimDoneDelay` | simulierte Auftragsdauer |
 | `bReqCmd*` | manuelle Einzelaufträge (Init, Start/Continue/Pause/Stop, Move, ChangeTool) |
 | `bReqCmdResetError` | Quittierung über Auftrag 110 |
@@ -212,14 +221,14 @@ Legende: Umgebung A = Testbench-Simulator, B = End-to-End mit C#-Dummy.
 | 2 | A | Normalablauf | `bAutoSequence := TRUE` | 4 Aufträge je Done-Puls, `nDoneCount = 4`, `nErrorCount = 0`, Sequence monoton steigend |
 | 3 | A+B | Manuelle Wrapper-Befehle | `bReqCmdInit`, `bReqCmdStartProg`, … je einmal | je Done-Puls; zwischen zwei Aufträgen State kurz IDLE |
 | 4 | A+B | Validation-Reject | `bSimIpcReject := TRUE`, dann Auftrag | WAIT_ACCEPT → ERROR mit `ErrorSequence`-Pfad, `nErrorCode = 1001` (B: Code der Dummy-Validierung), `Error.Active` gelatcht |
-| 5 | A+B | Error-Latch + Reset | nach #4: `bReqCmdResetError` | ERROR → IDLE → Auftrag 110 → Done; `nErrorCode` 0, `Error.Active` FALSE, neue Aufträge wieder möglich |
+| 5 | A+B | Error-Latch + Reset | nach #4: `bReqCmdResetError` — auch testbar, während die Postbox noch in WAIT_ACCEPT/WAIT_COMPLETION steht | Reset wird angenommen, sitzengebliebener Auftrag wird verworfen, Auftrag 110 → Done; `nErrorCode` 0, `Error.Active` FALSE, neue Aufträge wieder möglich |
 | 6 | A | Stale Request | `bSimIpcReject`, dann `Command()` während ERROR versuchen | `Command` FALSE; `ResetError` funktioniert trotzdem (kein „request pending") |
 | 7 | A+B | Heartbeat-Verlust ohne Auftrag | `bSimIpcOnline := FALSE` | nach `nTimeoutHeartbeatMs` `bHeartbeatOk` FALSE, kein ERROR |
 | 8 | A+B | Heartbeat-Verlust während Auftrag | Auftrag starten, sofort `bSimIpcOnline := FALSE` | Fehler 8003 (ADS aus: 8004), ERROR latched; nach Wiederkehr Reset per #5 |
 | 9 | A+B | Ack-Timeout | Auftrag starten und Simulator Accept verweigern (B: Service anhalten) | nach `nTimeoutAckMs` Fehler 8001, Alarm `bAlarmTimeoutAck` |
 | 10 | B | Versions-Freeze | Service mit `InterfaceVersion = 1` kompilieren | 9001 auf SPS, 1005 am IPC, keine Ausführung; Mismatch nicht weg-resetbar |
 | 11 | A+B | ThinPlate-Mismatch | `stPress.ThinPlate` am External ändern, ohne `bThinPlate` anzupassen (B), bzw. MoveWafer mit abweichendem Bit (A: via `bSimIpcReject` nicht abgedeckt — in B testen) | Ablehnung 1002 |
-| 12 | B | Pressrezept-Handshake | MoveWafer; wenn `Press.RecipeStartRequestSequence` ≠ 0: über `fbEpsonADS.AnswerRecipeStart(eResult := Started)` antworten (fließt nach `stPlcToIpc.External.Press.RecipeStartAckSequence/Result`, dort wartet der Service) | Progress WaitingForPressRecipe → Started → Done; Release von WaferPress/WaferTransfer; ohne Antwort → Ack-Timeout 8002 |
+| 12 | A+B | Pressrezept-Handshake | MoveWafer; in A erhebt der Simulator die Anforderung selbst (300 ms nach Accept), in B der Service — Antwort je über `fbEpsonADS.AnswerRecipeStart(eResult := Started)` (fließt nach `stPlcToIpc.External.Press.RecipeStartAckSequence/Result`) | `AnswerRecipeStart` wird aufgerufen (Rückgabe TRUE), Progress WaitingForPressRecipe → Started → Done; Release von WaferPress/WaferTransfer; ohne Antwort → Ack-Timeout 8002 |
 | 13 | B | Prompt-Ablehnung | MoveWafer/ChangeTool, wenn `UserPrompt.Active`: `fbEpsonADS.AnswerUserPrompt(eReaction := E_EpsonUserReaction.No)` (fließt nach `Cmd.UserReaction*`) | Fehler 2003, ERROR latched, Locks bleiben bis Reset gehalten |
 | 14 | B | Lock-Lebenszyklus | MoveWafer beobachten | RequestMask = Transfer+Press; nach WaferOnRobot Release WaferTransfer (Grant verschwindet trotz laufendem Auftrag); nach Done Release Rest |
 | 15 | B | ForceRelease | nach #13 Reset verweigern (IPC offline), Service-Fehler erzeugen, `ForceReleaseRequest` setzen, `ManageLocks(bForceReleaseAllowed := TRUE)` | alle Grants 0; mit FALSE keine Änderung |

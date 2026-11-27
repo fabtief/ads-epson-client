@@ -18,6 +18,10 @@ läuft in den Ack-Timeout).
   WAIT_ACCEPT, danach Error-Latch D7), `bAutoAnswerPrompts`
   (Bedienerprompt → `AnswerUserPrompt(OK)`, Pressrezept-Anforderung →
   `AnswerRecipeStart(Started)`), `tSimDoneDelay`.
+- **Rezept-Simulation**: bei laufendem MoveWafer setzt der Simulator 300 ms
+  nach Accept `Press.RecipeStartRequestSequence` (Verhalten des echten
+  Service) — erst dadurch wird `AnswerRecipeStart` in Umgebung A überhaupt
+  erreichbar.
 - **Konfiguration**: `stConfig.nTimeoutHeartbeatMs := 1000`,
   `nTimeoutAckMs := 5000`, `nTimeoutCmdMs := 30000` (D8).
 - **ManageLocks** um `bForceReleaseAllowed := TRUE` ergänzt.

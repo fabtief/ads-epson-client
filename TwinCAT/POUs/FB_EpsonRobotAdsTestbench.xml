@@ -39,6 +39,8 @@ VAR
 
     // IPC simulation
     stProtocolCmd          : ST_EpsonProtocolCmd;
+    nLastSimRecipeReq      : UDINT;
+    fbSimRecipe            : TON;
     nSimHeartbeat         : UDINT;
     fbSimDone             : TON;
 END_VAR]]></Declaration>
@@ -100,8 +102,22 @@ IF bAutoAnswerPrompts AND GVL_EpsonADS.stIpcToPlc.UserPrompt.Active THEN
     END_IF
 END_IF
 
+// simulate the press recipe request of a running MoveWafer (IPC behavior)
+IF GVL_EpsonADS.stPlcToIpc.Cmd.Valid
+AND GVL_EpsonADS.stPlcToIpc.Cmd.Code = E_EpsonCommand.MoveWafer
+AND GVL_EpsonADS.stIpcToPlc.Cmd.AcceptedSequence = GVL_EpsonADS.stPlcToIpc.Cmd.Sequence
+AND nLastSimRecipeReq <> GVL_EpsonADS.stPlcToIpc.Cmd.Sequence THEN
+    fbSimRecipe(IN := TRUE, PT := T#300MS);
+    IF fbSimRecipe.Q THEN
+        GVL_EpsonADS.stIpcToPlc.Press.RecipeStartRequestSequence := GVL_EpsonADS.stPlcToIpc.Cmd.Sequence;
+        nLastSimRecipeReq := GVL_EpsonADS.stPlcToIpc.Cmd.Sequence;
+        fbSimRecipe(IN := FALSE);
+    END_IF
+END_IF
+
 // auto-answer press recipe request (simulated press)
-IF GVL_EpsonADS.stIpcToPlc.Press.RecipeStartRequestSequence <> 0
+IF bAutoAnswerPrompts
+AND GVL_EpsonADS.stIpcToPlc.Press.RecipeStartRequestSequence <> 0
 AND GVL_EpsonADS.stIpcToPlc.Press.RecipeStartRequestSequence <> GVL_EpsonADS.stPlcToIpc.External.Press.RecipeStartAckSequence THEN
     fbEpsonADS.AnswerRecipeStart(eResult := E_EpsonPressResult.Started);
 END_IF

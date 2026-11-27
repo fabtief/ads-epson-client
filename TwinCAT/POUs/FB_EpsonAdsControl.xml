@@ -419,6 +419,16 @@ END_VAR]]></Declaration>
       <Implementation>
         <ST><![CDATA[stProperties.bDone := FALSE; // 1-cycle pulse
 
+// a latched IPC error unlocks the reset order from every non-IDLE state:
+// the pending order is dropped and the reset runs through the regular postbox
+IF bReqCommand AND stReqCmd.Code = E_EpsonCommand.ResetError
+   AND stProperties.eState <> E_EpsonAdsControlState.IDLE
+   AND GVL_EpsonADS.stIpcToPlc.Error.Active THEN
+    GVL_EpsonADS.stPlcToIpc.Cmd.Valid := FALSE;
+    stProperties.bBusy := FALSE;
+    stProperties.eState := E_EpsonAdsControlState.IDLE;
+END_IF
+
 CASE stProperties.eState OF
 
     // ------------------------------------------------------------------------
@@ -843,7 +853,8 @@ METHOD ResetError : BOOL
 VAR_INPUT
 END_VAR]]></Declaration>
       <Implementation>
-        <ST><![CDATA[IF stProperties.eState <> E_EpsonAdsControlState.ERROR THEN
+        <ST><![CDATA[IF stProperties.eState <> E_EpsonAdsControlState.ERROR
+   AND NOT GVL_EpsonADS.stIpcToPlc.Error.Active THEN
     F_SendMessage('ResetError not possible. No error state active.', TcEventSeverity.Warning, THIS^.fbSourceInfo);
     ResetError := FALSE;
     RETURN;
@@ -995,14 +1006,10 @@ END_VAR]]></Declaration>
             END_IF
         END_IF
 
-        // User prompt answer
+        // User prompt answer (backchannel, independent of ControlSource)
         IF fbTrigUserReaction.Q THEN
             stHmi.bCmdUserReaction := FALSE;
-            IF eControlSource = E_ControlSource.HMI THEN
-                AnswerUserPrompt(eReaction := stHmi.eCmdUserReaction);
-            ELSE
-                F_SendMessage('Command not accepted due to wrong ControlSource', TcEventSeverity.Warning, THIS^.fbSourceInfo);
-            END_IF
+            AnswerUserPrompt(eReaction := stHmi.eCmdUserReaction);
         END_IF
 
 // SPECIFIC
