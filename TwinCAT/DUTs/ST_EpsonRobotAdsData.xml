@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4026.19">
+  <DUT Name="ST_EpsonRobotAdsData" Id="{69c2157c-98d7-4584-ad75-b33be5020d9c}">
+    <Declaration><![CDATA[TYPE ST_EpsonRobotAdsData :
+STRUCT
+    bAutoMode             : BOOL := TRUE;
+    bSafetyPermissive     : BOOL := TRUE;
+    stTransfer            : ST_EpsonTransferState :=
+                                (
+                                Ready               := TRUE,
+                                WaferExpected       := TRUE
+                                );
+
+    stPress               : ST_EpsonPressState :=
+                                (
+                                Ready               := TRUE,
+                                PlatePresent        := TRUE,
+                                ThinPlate           := FALSE,
+                                TargetSlotFree      := TRUE
+                                );
+
+    stToolStat            : ST_EpsonToolStationState :=
+                                (
+                                Ready               := TRUE,
+                                DoorLocked          := TRUE
+                                );
+
+    stGenmark             : ST_EpsonRobotState :=
+                                (
+                                Ready               := TRUE,
+                                Idle                := TRUE,
+                                Parked              := TRUE
+                                );
+
+    stStaeubli            : ST_EpsonRobotState :=
+                                (
+                                Ready               := TRUE,
+                                Idle                := TRUE,
+                                Parked              := TRUE
+                                );
+
+    // Locks
+    bTransferAllowed        : BOOL := TRUE;
+    bPressAllowed           : BOOL := TRUE;
+    bToolStatAllowed        : BOOL := TRUE;
+    bGenmarkAllowed         : BOOL := TRUE;
+    bStaeubliAllowed        : BOOL := TRUE;
+END_STRUCT
+END_TYPE]]></Declaration>
+  </DUT>
+</TcPlcObject>

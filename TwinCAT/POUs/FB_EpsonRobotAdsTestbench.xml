@@ -1,0 +1,443 @@
+<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4026.19">
+  <POU Name="FB_EpsonRobotAdsTestbench" Id="{3409c2fe-8aed-4ad2-843e-33e2b4bf6f94}" SpecialFunc="None">
+    <Declaration><![CDATA[FUNCTION_BLOCK FB_EpsonRobotAdsTestbench
+VAR_INPUT
+    bAutoSequence         : BOOL := FALSE;      // Run automatic test sequence (Init -> Prog -> Move -> Tool)
+    bSimIpcOnline         : BOOL := TRUE;       // Simulate the IPC side (heartbeat, accept/done handshake)
+    bSimIpcReject         : BOOL := FALSE;      // One-shot: next command is rejected by the simulated IPC
+    bAutoAnswerPrompts    : BOOL := TRUE;       // Auto-answer user prompts / recipe requests with OK / Started
+    tSimDoneDelay         : TIME := T#1S;       // Simulated command execution time
+END_VAR
+VAR_OUTPUT
+    bLastCmdDone          : BOOL;               // Last command finished ok
+    bLastCmdError         : BOOL;               // Last command finished with error
+    nDoneCount            : UDINT;              // Successful commands
+    nErrorCount           : UDINT;              // Failed commands
+END_VAR
+VAR
+    fbEpsonADS            : FB_EpsonAdsControl;
+
+    eTestStep             : (TB_IDLE, TB_INIT, TB_WAIT_INIT, TB_PROG, TB_WAIT_PROG,
+                             TB_MOVE, TB_WAIT_MOVE, TB_TOOL, TB_WAIT_TOOL, TB_DONE);
+
+    // Manual triggers (rising edge, one-shot)
+    bReqCmdInit                 : BOOL;
+    bReqCmdStartProg            : BOOL;
+    bReqContinueProg            : BOOL;
+    bReqCmdPauseProg            : BOOL;
+    bReqCmdStopProg             : BOOL;
+    bReqCmdStartMove            : BOOL;
+    bReqCmdStartChangeTool      : BOOL;
+    bReqCmdResetError           : BOOL;
+
+    // Process data (static test values)
+    stData                      : ST_EpsonRobotAdsData;
+
+    // Error edge detection
+    bLastErrorLevel       : BOOL;
+
+    // IPC simulation
+    stProtocolCmd          : ST_EpsonProtocolCmd;
+    nSimHeartbeat         : UDINT;
+    fbSimDone             : TON;
+END_VAR]]></Declaration>
+    <Implementation>
+      <ST><![CDATA[// ----------------------------------------------------------------------------
+// 0. Configuration (contract v2, see D8)
+// ----------------------------------------------------------------------------
+fbEpsonADS.stConfig.nTimeoutHeartbeatMs := 1000;
+fbEpsonADS.stConfig.nTimeoutAckMs       := 5000;
+fbEpsonADS.stConfig.nTimeoutCmdMs       := 30000;
+
+// ----------------------------------------------------------------------------
+// 1. IPC simulation (writes GVL_EpsonADS.stIpcToPlc)
+// ----------------------------------------------------------------------------
+IF bSimIpcOnline THEN
+    GVL_EpsonADS.stIpcToPlc.InterfaceVersion        := 2;
+    GVL_EpsonADS.stIpcToPlc.AdsConnected            := TRUE;
+    GVL_EpsonADS.stIpcToPlc.StationChannelConnected := TRUE;
+    GVL_EpsonADS.stIpcToPlc.RemoteControlConnected  := TRUE;
+    nSimHeartbeat := nSimHeartbeat + 1;
+    GVL_EpsonADS.stIpcToPlc.Heartbeat := nSimHeartbeat;
+ELSE
+    GVL_EpsonADS.stIpcToPlc.AdsConnected := FALSE;
+END_IF
+
+// command handshake: accept -> done (or one-shot reject)
+IF GVL_EpsonADS.stPlcToIpc.Cmd.Valid THEN
+    IF GVL_EpsonADS.stIpcToPlc.Cmd.ErrorSequence = GVL_EpsonADS.stPlcToIpc.Cmd.Sequence
+    OR GVL_EpsonADS.stIpcToPlc.Cmd.AcceptedSequence = GVL_EpsonADS.stPlcToIpc.Cmd.Sequence THEN
+        // already answered, wait for completion
+        fbSimDone(IN := GVL_EpsonADS.stIpcToPlc.Cmd.AcceptedSequence = GVL_EpsonADS.stPlcToIpc.Cmd.Sequence,
+                  PT := tSimDoneDelay);
+        IF fbSimDone.Q THEN
+            GVL_EpsonADS.stIpcToPlc.Cmd.DoneSequence := GVL_EpsonADS.stPlcToIpc.Cmd.Sequence;
+            fbSimDone(IN := FALSE);
+            IF GVL_EpsonADS.stPlcToIpc.Cmd.Code = E_EpsonCommand.ResetError THEN
+                GVL_EpsonADS.stIpcToPlc.Error.Active := FALSE;
+                GVL_EpsonADS.stIpcToPlc.Error.Code   := 0;
+                GVL_EpsonADS.stIpcToPlc.Error.Text   := '';
+            END_IF
+        END_IF
+    ELSIF bSimIpcReject THEN
+        bSimIpcReject := FALSE;
+        GVL_EpsonADS.stIpcToPlc.Cmd.ErrorSequence := GVL_EpsonADS.stPlcToIpc.Cmd.Sequence;
+        GVL_EpsonADS.stIpcToPlc.Error.Active      := TRUE;
+        GVL_EpsonADS.stIpcToPlc.Error.Code        := 1001;
+        GVL_EpsonADS.stIpcToPlc.Error.Text        := 'Testbench: simulated IPC validation rejection';
+    ELSE
+        GVL_EpsonADS.stIpcToPlc.Cmd.AcceptedSequence := GVL_EpsonADS.stPlcToIpc.Cmd.Sequence;
+    END_IF
+ELSE
+    fbSimDone(IN := FALSE);
+END_IF
+
+// auto-answer user prompt (simulated operator)
+IF bAutoAnswerPrompts AND GVL_EpsonADS.stIpcToPlc.UserPrompt.Active THEN
+    IF fbEpsonADS.AnswerUserPrompt(eReaction := E_EpsonUserReaction.OK) THEN
+        GVL_EpsonADS.stIpcToPlc.UserPrompt.Active := FALSE;
+    END_IF
+END_IF
+
+// auto-answer press recipe request (simulated press)
+IF GVL_EpsonADS.stIpcToPlc.Press.RecipeStartRequestSequence <> 0
+AND GVL_EpsonADS.stIpcToPlc.Press.RecipeStartRequestSequence <> GVL_EpsonADS.stPlcToIpc.External.Press.RecipeStartAckSequence THEN
+    fbEpsonADS.AnswerRecipeStart(eResult := E_EpsonPressResult.Started);
+END_IF
+
+// ----------------------------------------------------------------------------
+// 2. Call control FB
+// ----------------------------------------------------------------------------
+fbEpsonADS();
+
+// ----------------------------------------------------------------------------
+// 3. Cyclic process states (static test values)
+// ----------------------------------------------------------------------------
+fbEpsonADS.UpdateExternalState(
+    bAutoMode         := stData.bAutoMode,
+    bSafetyPermissive := stData.bSafetyPermissive,
+    stTransfer        := stData.stTransfer,
+    stPress           := stData.stPress,
+    stToolStation     := stData.stToolStat,
+    stGenmark         := stData.stGenmark,
+    stStaeubli        := stData.stStaeubli
+);
+
+// ----------------------------------------------------------------------------
+// 4. Resource locks (testbench grants everything)
+// ----------------------------------------------------------------------------
+fbEpsonADS.ManageLocks(
+    bTransferAllowed     := stData.bTransferAllowed,
+    bPressAllowed        := stData.bPressAllowed,
+    bToolStatAllowed     := stData.bToolStatAllowed,
+    bGenmarkAllowed      := stData.bGenmarkAllowed,
+    bStaeubliAllowed     := stData.bStaeubliAllowed,
+    bForceReleaseAllowed := TRUE
+);
+
+// ----------------------------------------------------------------------------
+// 5. Result bookkeeping
+// ----------------------------------------------------------------------------
+IF fbEpsonADS.bDone THEN
+    bLastCmdDone := TRUE;
+    bLastCmdError := FALSE;
+    nDoneCount := nDoneCount + 1;
+END_IF
+
+IF fbEpsonADS.bAlarmCommandError AND NOT bLastErrorLevel THEN
+    bLastCmdError := TRUE;
+    bLastCmdDone := FALSE;
+    nErrorCount := nErrorCount + 1;
+END_IF
+bLastErrorLevel := fbEpsonADS.bAlarmCommandError;
+
+// ----------------------------------------------------------------------------
+// 6. Manual commands
+// ----------------------------------------------------------------------------
+IF bReqCmdInit THEN
+    bReqCmdInit := FALSE;
+    fbEpsonADS.Command(
+        eCommand                := E_EpsonCommand.Initialize,
+        eSource                 := E_EpsonSource.WaferTransfer,
+        nTargetSlot             := 0,
+        eRequiredTool           := E_EpsonTool.Free,
+        nMinPressDistanceUm     := 0,
+        bThinPlate              := FALSE,
+        nCleanPosition          := 0,
+        nCleanStepCount         := 0,
+        eOutputIndex            := E_EpsonOutput.Unknown,
+        bOutputSet              := FALSE,
+        bServiceEnable          := FALSE,
+        stProtocol              := stProtocolCmd,
+        bToolFromExternal       := FALSE,
+        bOldToolToExternal      := FALSE,
+        bUseExternalPutFallback := FALSE
+    );
+END_IF
+
+IF bReqCmdStartProg THEN
+    bReqCmdStartProg := FALSE;
+    fbEpsonADS.Command(
+        eCommand                := E_EpsonCommand.StartProgram,
+        eSource                 := E_EpsonSource.WaferTransfer,
+        nTargetSlot             := 0,
+        eRequiredTool           := E_EpsonTool.Free,
+        nMinPressDistanceUm     := 0,
+        bThinPlate              := FALSE,
+        nCleanPosition          := 0,
+        nCleanStepCount         := 0,
+        eOutputIndex            := E_EpsonOutput.Unknown,
+        bOutputSet              := FALSE,
+        bServiceEnable          := FALSE,
+        stProtocol              := stProtocolCmd,
+        bToolFromExternal       := FALSE,
+        bOldToolToExternal      := FALSE,
+        bUseExternalPutFallback := FALSE
+    );
+END_IF
+
+IF bReqContinueProg THEN
+    bReqContinueProg := FALSE;
+    fbEpsonADS.Command(
+        eCommand                := E_EpsonCommand.ContinueProgram,
+        eSource                 := E_EpsonSource.WaferTransfer,
+        nTargetSlot             := 0,
+        eRequiredTool           := E_EpsonTool.Free,
+        nMinPressDistanceUm     := 0,
+        bThinPlate              := FALSE,
+        nCleanPosition          := 0,
+        nCleanStepCount         := 0,
+        eOutputIndex            := E_EpsonOutput.Unknown,
+        bOutputSet              := FALSE,
+        bServiceEnable          := FALSE,
+        stProtocol              := stProtocolCmd,
+        bToolFromExternal       := FALSE,
+        bOldToolToExternal      := FALSE,
+        bUseExternalPutFallback := FALSE
+    );
+END_IF
+
+IF bReqCmdPauseProg THEN
+    bReqCmdPauseProg := FALSE;
+    fbEpsonADS.Command(
+        eCommand                := E_EpsonCommand.PauseProgram,
+        eSource                 := E_EpsonSource.WaferTransfer,
+        nTargetSlot             := 0,
+        eRequiredTool           := E_EpsonTool.Free,
+        nMinPressDistanceUm     := 0,
+        bThinPlate              := FALSE,
+        nCleanPosition          := 0,
+        nCleanStepCount         := 0,
+        eOutputIndex            := E_EpsonOutput.Unknown,
+        bOutputSet              := FALSE,
+        bServiceEnable          := FALSE,
+        stProtocol              := stProtocolCmd,
+        bToolFromExternal       := FALSE,
+        bOldToolToExternal      := FALSE,
+        bUseExternalPutFallback := FALSE
+    );
+END_IF
+
+IF bReqCmdStopProg THEN
+    bReqCmdStopProg := FALSE;
+    fbEpsonADS.Command(
+        eCommand                := E_EpsonCommand.StopProgram,
+        eSource                 := E_EpsonSource.WaferTransfer,
+        nTargetSlot             := 0,
+        eRequiredTool           := E_EpsonTool.Free,
+        nMinPressDistanceUm     := 0,
+        bThinPlate              := FALSE,
+        nCleanPosition          := 0,
+        nCleanStepCount         := 0,
+        eOutputIndex            := E_EpsonOutput.Unknown,
+        bOutputSet              := FALSE,
+        bServiceEnable          := FALSE,
+        stProtocol              := stProtocolCmd,
+        bToolFromExternal       := FALSE,
+        bOldToolToExternal      := FALSE,
+        bUseExternalPutFallback := FALSE
+    );
+END_IF
+
+// Wafer transfer (slot 3, 4" tool, 400um min press distance)
+IF bReqCmdStartMove THEN
+    bReqCmdStartMove := FALSE;
+    fbEpsonADS.Command(
+        eCommand                := E_EpsonCommand.MoveWafer,
+        eSource                 := E_EpsonSource.WaferTransfer,
+        nTargetSlot             := 3,
+        eRequiredTool           := E_EpsonTool.Tool4SingleSide,
+        nMinPressDistanceUm     := 400,
+        bThinPlate              := stData.stPress.ThinPlate,
+        nCleanPosition          := 0,
+        nCleanStepCount         := 0,
+        eOutputIndex            := E_EpsonOutput.Unknown,
+        bOutputSet              := FALSE,
+        bServiceEnable          := FALSE,
+        stProtocol              := stProtocolCmd,
+        bToolFromExternal       := FALSE,
+        bOldToolToExternal      := FALSE,
+        bUseExternalPutFallback := FALSE
+    );
+END_IF
+
+// Full tool change with external get/put
+IF bReqCmdStartChangeTool THEN
+    bReqCmdStartChangeTool := FALSE;
+    fbEpsonADS.Command(
+        eCommand                := E_EpsonCommand.ChangeTool,
+        eSource                 := E_EpsonSource.WaferTransfer,
+        nTargetSlot             := 0,
+        eRequiredTool           := E_EpsonTool.Tool5DoubleSide,
+        nMinPressDistanceUm     := 0,
+        bThinPlate              := FALSE,
+        nCleanPosition          := 0,
+        nCleanStepCount         := 0,
+        eOutputIndex            := E_EpsonOutput.Unknown,
+        bOutputSet              := FALSE,
+        bServiceEnable          := FALSE,
+        stProtocol              := stProtocolCmd,
+        bToolFromExternal       := TRUE,
+        bOldToolToExternal      := TRUE,
+        bUseExternalPutFallback := TRUE
+    );
+END_IF
+
+// ----------------------------------------------------------------------------
+// 7. Automatic test sequence: Init -> StartProgram -> MoveWafer -> ChangeTool
+// ----------------------------------------------------------------------------
+IF bAutoSequence THEN
+    CASE eTestStep OF
+
+        TB_IDLE:
+            bLastCmdDone := FALSE;
+            bLastCmdError := FALSE;
+            eTestStep := TB_INIT;
+
+        TB_INIT:
+            IF fbEpsonADS.Command(
+                   eCommand                := E_EpsonCommand.Initialize,
+                   eSource                 := E_EpsonSource.WaferTransfer,
+                   nTargetSlot             := 0,
+                   eRequiredTool           := E_EpsonTool.Free,
+                   nMinPressDistanceUm     := 0,
+                   bThinPlate              := FALSE,
+                   nCleanPosition          := 0,
+                   nCleanStepCount         := 0,
+                   eOutputIndex            := E_EpsonOutput.Unknown,
+                   bOutputSet              := FALSE,
+                   bServiceEnable          := FALSE,
+                   stProtocol              := stProtocolCmd,
+                   bToolFromExternal       := FALSE,
+                   bOldToolToExternal      := FALSE,
+                   bUseExternalPutFallback := FALSE) THEN
+                eTestStep := TB_WAIT_INIT;
+            END_IF
+
+        TB_WAIT_INIT:
+            IF fbEpsonADS.bDone THEN
+                eTestStep := TB_PROG;
+            ELSIF fbEpsonADS.bAlarmCommandError THEN
+                eTestStep := TB_DONE;
+            END_IF
+
+        TB_PROG:
+            IF fbEpsonADS.Command(
+                   eCommand                := E_EpsonCommand.StartProgram,
+                   eSource                 := E_EpsonSource.WaferTransfer,
+                   nTargetSlot             := 0,
+                   eRequiredTool           := E_EpsonTool.Free,
+                   nMinPressDistanceUm     := 0,
+                   bThinPlate              := FALSE,
+                   nCleanPosition          := 0,
+                   nCleanStepCount         := 0,
+                   eOutputIndex            := E_EpsonOutput.Unknown,
+                   bOutputSet              := FALSE,
+                   bServiceEnable          := FALSE,
+                   stProtocol              := stProtocolCmd,
+                   bToolFromExternal       := FALSE,
+                   bOldToolToExternal      := FALSE,
+                   bUseExternalPutFallback := FALSE) THEN
+                eTestStep := TB_WAIT_PROG;
+            END_IF
+
+        TB_WAIT_PROG:
+            IF fbEpsonADS.bDone THEN
+                eTestStep := TB_MOVE;
+            ELSIF fbEpsonADS.bAlarmCommandError THEN
+                eTestStep := TB_DONE;
+            END_IF
+
+        TB_MOVE:
+            IF fbEpsonADS.Command(
+                   eCommand                := E_EpsonCommand.MoveWafer,
+                   eSource                 := E_EpsonSource.WaferTransfer,
+                   nTargetSlot             := 3,
+                   eRequiredTool           := E_EpsonTool.Tool4SingleSide,
+                   nMinPressDistanceUm     := 400,
+                   bThinPlate              := stData.stPress.ThinPlate,
+                   nCleanPosition          := 0,
+                   nCleanStepCount         := 0,
+                   eOutputIndex            := E_EpsonOutput.Unknown,
+                   bOutputSet              := FALSE,
+                   bServiceEnable          := FALSE,
+                   stProtocol              := stProtocolCmd,
+                   bToolFromExternal       := FALSE,
+                   bOldToolToExternal      := FALSE,
+                   bUseExternalPutFallback := FALSE) THEN
+                eTestStep := TB_WAIT_MOVE;
+            END_IF
+
+        TB_WAIT_MOVE:
+            IF fbEpsonADS.bDone THEN
+                eTestStep := TB_TOOL;
+            ELSIF fbEpsonADS.bAlarmCommandError THEN
+                eTestStep := TB_DONE;
+            END_IF
+
+        TB_TOOL:
+            IF fbEpsonADS.Command(
+                   eCommand                := E_EpsonCommand.ChangeTool,
+                   eSource                 := E_EpsonSource.WaferTransfer,
+                   nTargetSlot             := 0,
+                   eRequiredTool           := E_EpsonTool.Tool5DoubleSide,
+                   nMinPressDistanceUm     := 0,
+                   bThinPlate              := FALSE,
+                   nCleanPosition          := 0,
+                   nCleanStepCount         := 0,
+                   eOutputIndex            := E_EpsonOutput.Unknown,
+                   bOutputSet              := FALSE,
+                   bServiceEnable          := FALSE,
+                   stProtocol              := stProtocolCmd,
+                   bToolFromExternal       := TRUE,
+                   bOldToolToExternal      := TRUE,
+                   bUseExternalPutFallback := TRUE) THEN
+                eTestStep := TB_WAIT_TOOL;
+            END_IF
+
+        TB_WAIT_TOOL:
+            IF fbEpsonADS.bDone OR fbEpsonADS.bAlarmCommandError THEN
+                eTestStep := TB_DONE;
+            END_IF
+
+        TB_DONE:
+            bAutoSequence := FALSE;
+            eTestStep := TB_IDLE;
+
+    END_CASE
+ELSIF NOT fbEpsonADS.bBusy AND eTestStep <> TB_IDLE THEN
+    // Auto sequence switched off: reset step display when idle
+    eTestStep := TB_IDLE;
+END_IF
+
+// ----------------------------------------------------------------------------
+// 8. Error acknowledge (order 110 through the regular command postbox)
+// ----------------------------------------------------------------------------
+IF bReqCmdResetError THEN
+    bReqCmdResetError := FALSE;
+    fbEpsonADS.ResetError();
+END_IF]]></ST>
+    </Implementation>
+  </POU>
+</TcPlcObject>
