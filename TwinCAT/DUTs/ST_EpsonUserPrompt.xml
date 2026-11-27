@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4026.19">
+  <DUT Name="ST_EpsonUserPrompt" Id="{783d259e-37fb-4900-abc5-5d36d21ccb7e}">
+    <Declaration><![CDATA[{attribute 'pack_mode' := '1'}
+TYPE ST_EpsonUserPrompt :
+STRUCT
+    Active                    : BOOL;           // State-Machine wartet auf Bedienerreaktion
+    MessageId                 : UDINT;          // Meldungs-ID
+    OptionsMask               : DWORD;          // Bits aus E_EpsonUserReaction
+    Text                      : STRING(255);    // Meldung für SPS/HMI
+    AcceptedReactionSequence  : UDINT;          // Zuletzt verarbeitete Cmd.UserReactionSequence
+END_STRUCT
+END_TYPE]]></Declaration>
+  </DUT>
+</TcPlcObject>

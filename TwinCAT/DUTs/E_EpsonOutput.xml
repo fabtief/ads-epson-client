@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4026.19">
+  <DUT Name="E_EpsonOutput" Id="{4f506059-f24f-44ee-b5cd-9f71e497c1ef}">
+    <Declaration><![CDATA[{attribute 'qualified_only'}
+{attribute 'strict'}
+{attribute 'to_string'}
+// Entspricht dem Legacy-EOutputIndex aus EpsonProt.cs
+TYPE E_EpsonOutput :
+(
+    CylPressplate            := 0,
+    ToolConnector            := 1,
+    CylFillWaferTransfer     := 2,
+    CylWaferTransfer         := 3,
+    WaferAbblasen            := 4,
+    BalligBlasenKammerBelueften := 5,
+    ToolVac                  := 6,
+    WaferVac                 := 7,
+    Reserve0                 := 8,
+    PlateVac                 := 9,
+    Reserve1                 := 10,
+    Reserve2                 := 11,
+    Reserve3                 := 12,
+    Ammoniac                 := 13,
+    Unknown                  := 255 // Legacy eUnknown=-1, im UINT-Bereich abgebildet
+);
+END_TYPE]]></Declaration>
+  </DUT>
+</TcPlcObject>

@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4026.19">
+  <DUT Name="ST_EpsonCmdAck" Id="{72d4170e-4af7-4e28-a442-207ba585300d}">
+    <Declaration><![CDATA[{attribute 'pack_mode' := '1'}
+TYPE ST_EpsonCmdAck :
+STRUCT
+    AcceptedSequence      : UDINT;                // Zuletzt angenommene Auftragssequenz
+    DoneSequence          : UDINT;                // Erfolgreich beendete Sequenz
+    ErrorSequence         : UDINT;                // Mit Fehler beendete Sequenz
+    Busy                  : BOOL;                 // Lokale State-Machine führt Auftrag aus
+    Accepted              : BOOL;                 // Letzter Auftrag angenommen
+    Done                  : BOOL;                 // Letzter Auftrag erfolgreich beendet
+    Progress              : E_EpsonProgress;      // Aktuelle, sequenzgebundene Ablaufphase
+    WaferPicked           : BOOL;                 // Waferaufnahme für aktuellen/letzten Move bestätigt
+    WaferPlaced           : BOOL;                 // Waferablage für aktuellen/letzten Move bestätigt
+END_STRUCT
+END_TYPE]]></Declaration>
+  </DUT>
+</TcPlcObject>

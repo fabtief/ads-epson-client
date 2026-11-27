@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4026.19">
+  <DUT Name="ST_EpsonRobotStatus" Id="{26adeafa-9676-4378-bad5-3f4b1817efa6}">
+    <Declaration><![CDATA[{attribute 'pack_mode' := '1'}
+TYPE ST_EpsonRobotStatus :
+STRUCT
+    State                : E_EpsonState;       // Epson-Gesamtzustand
+    Initialized          : BOOL;               // Stationsprotokoll initialisiert
+    Ready                : BOOL;               // Lokal bereit für zulässigen Auftrag
+    Paused               : BOOL;               // Remote-Control meldet pausiert
+    Running              : BOOL;               // Remote-Control meldet laufend
+    CurrentToolType      : E_EpsonTool;        // Erkanntes Werkzeug aus letztem gueltigen Status
+    CurrentToolChuckId   : DINT;               // Erkannte Chuck-ID
+    ParkPosition         : BOOL;               // Parkposition vom Epson-Status bestätigt
+    WaferPresent         : BOOL;               // Epson-eigener Wafer-Sensor
+    FillWaferPresent     : BOOL;               // Epson-eigener Fill-Wafer-Sensor
+    ToolChange34Active   : BOOL;               // Kollisionsgefährdeter 3/4-Zoll-Wechsel aktiv
+END_STRUCT
+END_TYPE]]></Declaration>
+  </DUT>
+</TcPlcObject>

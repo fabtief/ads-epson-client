@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4026.19">
+  <DUT Name="E_EpsonPressResult" Id="{f9a61a00-1e0f-4612-8630-d7776f50942d}">
+    <Declaration><![CDATA[{attribute 'qualified_only'}
+{attribute 'strict'}
+{attribute 'to_string'}
+TYPE E_EpsonPressResult :
+(
+    Pending  := 0, // Rezeptstart noch nicht bestätigt
+    Started  := 1, // Rezept gestartet
+    Rejected := 2, // Rezeptstart abgelehnt
+    Error    := 3  // Rezeptstart fehlerhaft
+);
+END_TYPE]]></Declaration>
+  </DUT>
+</TcPlcObject>

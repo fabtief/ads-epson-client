@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4026.19">
+  <DUT Name="ST_EpsonProtocolCmd" Id="{e63e0506-78ec-488f-a065-329f45a13237}">
+    <Declaration><![CDATA[{attribute 'pack_mode' := '1'}
+TYPE ST_EpsonProtocolCmd :
+STRUCT
+    Code                   : E_EpsonProtocolCommand; // Typisierter Stationsbefehl
+    Ext                    : BOOL;                   // EXT
+    Position               : UINT;                   // POS: Slot (CMOVE) bzw. Reinigungsposition (CCLEAN)
+    MinPressDistanceUm     : DINT;                   // DMIN in µm, unverändert serialisieren
+    ThinPlate              : BOOL;                   // THIN
+    NoPark                 : BOOL;                   // NOPARK (CTPUT)
+    NoParkParameterPresent : BOOL;                   // TRUE: NOPARK übertragen, FALSE: Schlüssel weglassen
+    ToolDiameterInch       : UINT;                   // TOOL: 3,4,5,6,8 Zoll
+    Set                    : BOOL;                   // SET (CPWR/CSERVICE/COUT)
+    CleanStepCount         : UINT;                   // CNT (CCLEAN)
+    OutputIndex            : UINT;                   // IDX (COUT), gegen E_EpsonOutput validieren
+END_STRUCT
+END_TYPE]]></Declaration>
+  </DUT>
+</TcPlcObject>

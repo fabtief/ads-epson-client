@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4026.19">
+  <DUT Name="E_EpsonProtocolCommand" Id="{506327d7-0115-4819-b9e3-f5d0b2a20c9a}">
+    <Declaration><![CDATA[{attribute 'qualified_only'}
+{attribute 'strict'}
+{attribute 'to_string'}
+TYPE E_EpsonProtocolCommand :
+(
+    None        := 0,  // Kein Einzelbefehl
+    // Parameterlose Einzelbefehle (nur nach lokaler Zustands-/Ressourcenpruefung)
+    CINIT       := 1,  // Stationsprotokoll initialisieren
+    CPARK       := 2,  // Parkposition anfahren
+    CMOVESERV   := 3,  // Serviceposition anfahren
+    CSTOP       := 4,  // Geordneter Stopp (kein Safety-Not-Halt; Ergebnis = Versand)
+    // Bewegungs-/Werkzeugbefehle (kritische Bewegungen nur mit SPS-Grants)
+    CTPUT       := 10, // EXT, optional NOPARK
+    CTGET       := 11, // TOOL, EXT
+    CMOVE       := 12, // EXT, POS, DMIN, THIN
+    // Set-Befehle (Service-/Wartungsfreigabe erforderlich; CPWR gesperrt)
+    CPWR        := 20, // SET; bis Freigabe eines sicheren Power-Ablaufs abweisen
+    CSERVICE    := 21, // SET
+    COUT        := 22, // IDX, SET
+    CCLEAN      := 23, // POS, CNT
+    // Pressplatten-Einzelbefehle (Press-Grant + konsistente Plattenzustaende)
+    CPPINIT     := 30,
+    CPPPREPIN   := 31,
+    CPPPREPOUT  := 32,
+    CPPCLOSEIN  := 33, // THIN
+    CPPCLOSEOUT := 34
+);
+END_TYPE]]></Declaration>
+  </DUT>
+</TcPlcObject>

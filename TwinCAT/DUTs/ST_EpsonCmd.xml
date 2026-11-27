@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4026.19">
+  <DUT Name="ST_EpsonCmd" Id="{7aeb8303-2b7a-45d6-ba1c-af3687b99b59}">
+    <Declaration><![CDATA[// Command-Parameter SPS -> IPC
+{attribute 'pack_mode' := '1'}
+TYPE ST_EpsonCmd :
+STRUCT
+    Valid                    : BOOL;                   // Auftrag ist gültig; bis zum terminalen Ergebnis gesetzt lassen
+    Sequence                 : UDINT;                  // Eindeutige, steigende Auftragsnummer
+    Code                     : E_EpsonCommand;         // Auftrags-Code
+    Source                   : E_EpsonSource;          // Quelle (0=Transfer, 1=FillWafer)
+    TargetSlot               : UINT;                   // Zielslot 0..23 auf Pressplatte
+    RequiredTool             : E_EpsonTool;            // Sollwerkzeug
+    MinPressDistanceUm       : DINT;                   // Mindestpressdistanz in µm
+    ThinPlate                : BOOL;                   // Plattentyp für Bewegungs-/Pressplattenablauf
+    CleanPosition            : UINT;                   // Reinigungspositionsindex (CleanTool)
+    CleanStepCount           : UINT;                   // Anzahl Reinigungsschritte (CleanTool)
+    OutputIndex              : E_EpsonOutput;          // Epson-Ausgang (SetOutput)
+    OutputSet                : BOOL;                   // Ausgang ein-/ausschalten
+    ServiceEnable            : BOOL;                   // Service-Modus ein-/ausschalten
+    ToolFromExternal         : BOOL;                   // Werkzeug von externer Übergabe holen
+    OldToolToExternal        : BOOL;                   // Altes Werkzeug an externe Übergabe ablegen
+    UseExternalPutFallback   : BOOL;                   // Externe Übergabe als Fallback nutzen
+    Protocol                 : ST_EpsonProtocolCmd;    // Parameter für SendSingleProtocolCommand
+    UserMessageId            : UDINT;                  // Backchannel: bezieht sich auf UserPrompt.MessageId
+    UserReaction             : E_EpsonUserReaction;    // Backchannel: Bedienerreaktion
+    UserReactionSequence     : UDINT;                  // Backchannel: bei jeder neuen Antwort erhöhen
+END_STRUCT
+END_TYPE]]></Declaration>
+  </DUT>
+</TcPlcObject>

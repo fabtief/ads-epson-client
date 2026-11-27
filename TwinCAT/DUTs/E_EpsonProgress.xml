@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4026.19">
+  <DUT Name="E_EpsonProgress" Id="{97f26148-b93b-413b-8dc9-e135921661ca}">
+    <Declaration><![CDATA[{attribute 'qualified_only'}
+{attribute 'strict'}
+{attribute 'to_string'}
+TYPE E_EpsonProgress :
+(
+    Idle                 := 0,   // Kein Auftrag in Ausfuehrung
+    Validating           := 10,  // Auftrag wird validiert
+    WaitingForResources  := 20,  // Warten auf Lock-Grants
+    PreparingPress       := 30,  // Pressplatte/Umgebung vorbereiten
+    WaitingForPressRecipe:= 40,  // Warten auf RecipeStartAck/Result
+    MovingToSource       := 50,  // Bewegung zur Quelle
+    WaferOnRobot         := 60,  // Waferaufnahme bestätigt
+    MovingToTarget       := 70,  // Bewegung zum Ziel
+    Finishing            := 80,  // Nacharbeiten (Ablegen, Parken, Freigaben)
+    Done                 := 90,  // Auftrag erfolgreich beendet
+    Error                := 100  // Auftrag fehlerhaft beendet
+);
+END_TYPE]]></Declaration>
+  </DUT>
+</TcPlcObject>

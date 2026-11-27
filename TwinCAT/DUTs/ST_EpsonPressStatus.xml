@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4026.19">
+  <DUT Name="ST_EpsonPressStatus" Id="{585b0876-5afe-40cb-a421-5fe6cbaa17ed}">
+    <Declaration><![CDATA[{attribute 'pack_mode' := '1'}
+TYPE ST_EpsonPressStatus :
+STRUCT
+    RecipeStartRequestSequence : UDINT;         // Neue Sequenz, wenn der Move-Ablauf das Pressrezept anfordert
+END_STRUCT
+END_TYPE]]></Declaration>
+  </DUT>
+</TcPlcObject>
